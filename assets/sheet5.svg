@@ -1,0 +1,26 @@
+<svg width="80" height="60" viewBox="0 0 80 60" xmlns="http://www.w3.org/2000/svg">
+  <!-- Staff lines -->
+  <g stroke="white" stroke-width="1" fill="none">
+    <line x1="10" y1="15" x2="70" y2="15"/>
+    <line x1="10" y1="20" x2="70" y2="20"/>
+    <line x1="10" y1="25" x2="70" y2="25"/>
+    <line x1="10" y1="30" x2="70" y2="30"/>
+    <line x1="10" y1="35" x2="70" y2="35"/>
+  </g>
+  
+  <!-- Treble clef -->
+  <text x="12" y="32" font-family="serif" font-size="16" fill="white">𝄞</text>
+  
+  <!-- Rhythmic pattern with different note values -->
+  <circle cx="30" cy="25" r="3" fill="white"/>
+  <circle cx="42" cy="30" r="2.5" fill="white"/>
+  <circle cx="50" cy="20" r="2.5" fill="white"/>
+  <circle cx="58" cy="25" r="2.5" fill="white"/>
+  <circle cx="66" cy="30" r="2.5" fill="white"/>
+  
+  <!-- Note stems -->
+  <line x1="44.5" y1="30" x2="44.5" y2="40" stroke="white" stroke-width="1"/>
+  <line x1="52.5" y1="20" x2="52.5" y2="10" stroke="white" stroke-width="1"/>
+  <line x1="60.5" y1="25" x2="60.5" y2="15" stroke="white" stroke-width="1"/>
+  <line x1="68.5" y1="30" x2="68.5" y2="40" stroke="white" stroke-width="1"/>
+</svg>
