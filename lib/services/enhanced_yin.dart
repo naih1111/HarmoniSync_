@@ -6,15 +6,15 @@ import 'voice_activity_detector.dart';
 import 'pitch_smoother.dart';
 import 'yin_algorithm.dart';
 
-/// Drop-in enhancement wrapper around YinAlgorithm.
+/// Drop-in enhancement wrapper around YinAlgorithm with improved audio processing.
 ///
 /// Steps per frame:
 /// 1) Wiener-like noise reduction (time-domain, lightweight)
-/// 2) Voice Activity Detection (energy + ZCR)
+/// 2) Voice Activity Detection (energy + ZCR with temporal smoothing)
 /// 3) Optional: upsample to increase effective resolution
 /// 4) YIN pitch detection on cleaned PCM16 bytes
 /// 5) Optional: parabolic refinement around detected lag
-/// 6) Median smoothing across recent frames
+/// 6) Advanced median smoothing with outlier detection across recent frames
 class EnhancedYin {
 	final WienerFilter _wiener;
 	final VoiceActivityDetector _vad;
@@ -26,6 +26,9 @@ class EnhancedYin {
 	/// Enable parabolic refinement around detected period for sub-sample accuracy.
 	final bool enableParabolicRefinement;
 
+	/// Frame duration for VAD temporal smoothing
+	final int _frameDurationMs;
+
 	EnhancedYin({
 		required int sampleRate,
 		double wienerStrength = 0.5,
@@ -33,11 +36,23 @@ class EnhancedYin {
 		int medianWindow = 5,
 		int upsampleFactor = 1,
 		bool enableParabolicRefinement = true,
+		int frameDurationMs = 20,
 	})  : _wiener = WienerFilter(strength: wienerStrength),
-			_vad = VoiceActivityDetector(sampleRate: sampleRate, sensitivity: vadSensitivity),
-			_smoother = PitchSmoother(windowSize: medianWindow),
+			_vad = VoiceActivityDetector(
+				sampleRate: sampleRate, 
+				sensitivity: vadSensitivity,
+				minVoiceDurationMs: 50,      // Minimum voice duration
+				minSilenceDurationMs: 100,   // Minimum silence duration
+				hysteresisMargin: 0.1,       // Hysteresis for stability
+			),
+			_smoother = PitchSmoother(
+				windowSize: medianWindow,
+				outlierThreshold: 2.0,       // Outlier detection threshold
+				useWeightedMedian: true,     // Use weighted median
+			),
 			upsampleFactor = upsampleFactor < 1 ? 1 : upsampleFactor,
-			enableParabolicRefinement = enableParabolicRefinement;
+			enableParabolicRefinement = enableParabolicRefinement,
+			_frameDurationMs = frameDurationMs;
 
 	/// Processes one PCM16 little-endian frame. Returns smoothed pitch (Hz) or null
 	/// if no voice is detected.
@@ -45,8 +60,8 @@ class EnhancedYin {
 		// 1) Noise reduction on the PCM16 frame.
 		final Float64List cleaned = _wiener.apply(audioData);
 
-		// 2) Voice Activity Detection on cleaned samples.
-		final bool isVoice = _vad.isVoice(cleaned);
+		// 2) Voice Activity Detection on cleaned samples with temporal smoothing.
+		final bool isVoice = _vad.isVoice(cleaned, frameDurationMs: _frameDurationMs);
 		if (!isVoice) {
 			_wiener.updateNoiseFromNonVoice(cleaned);
 			// Keep smoother history intact but report no pitch for this frame.
@@ -70,8 +85,25 @@ class EnhancedYin {
 		// 5) Parabolic refinement around detected period using the same buffer fed to Yin.
 		final double refined = _refinePitchParabolic(bufferForYin, srForYin, basePitch);
 
-		// 6) Smooth across frames.
+		// 6) Advanced smoothing with outlier detection across frames.
 		return _smoother.add(refined);
+	}
+
+	/// Get comprehensive statistics for monitoring and debugging
+	Map<String, dynamic> getStatistics() {
+		return {
+			'wiener': _wiener.getStatistics(),
+			'vad': _vad.getStatistics(),
+			'smoother': _smoother.getStatistics(),
+			'vadConfidence': _vad.getLastConfidence(),
+		};
+	}
+
+	/// Reset all internal states for new audio session
+	void reset() {
+		_wiener.reset();
+		_vad.reset();
+		_smoother.reset();
 	}
 
 	Uint8List _float64ToPcm16(Float64List samples) {
@@ -133,4 +165,4 @@ class EnhancedYin {
 		if (!tauRefined.isFinite || tauRefined < 1.0) return f0;
 		return sr / tauRefined;
 	}
-} 
+}

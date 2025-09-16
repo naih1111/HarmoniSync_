@@ -43,8 +43,8 @@ dependencies:
   google_fonts: ^6.1.0
   file_picker: ^10.3.2 # For file picking
   http: ^1.1.0 # For HTTP requests to Python server
-  open_file: ^3.2.1 # Open files with installed apps\n  shared_preferences: ^2.2.2 # For persistent storage
-  shared_preferences: ^2.5.3
+  open_file: ^3.2.1 # Open files with installed apps
+  shared_preferences: ^2.5.3 # For persistent storage
 dev_dependencies:
   flutter_test:
     sdk: flutter
