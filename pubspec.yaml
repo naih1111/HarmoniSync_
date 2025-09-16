@@ -45,6 +45,7 @@ dependencies:
   http: ^1.1.0 # For HTTP requests to Python server
   open_file: ^3.2.1 # Open files with installed apps
   shared_preferences: ^2.5.3 # For persistent storage
+  image: ^4.1.7 # For image processing and analysis
 dev_dependencies:
   flutter_test:
     sdk: flutter
