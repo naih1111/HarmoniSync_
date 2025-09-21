@@ -1,0 +1,23 @@
+<svg width="80" height="60" viewBox="0 0 80 60" xmlns="http://www.w3.org/2000/svg">
+  <!-- Staff lines -->
+  <g stroke="white" stroke-width="1" fill="none">
+    <line x1="10" y1="15" x2="70" y2="15"/>
+    <line x1="10" y1="20" x2="70" y2="20"/>
+    <line x1="10" y1="25" x2="70" y2="25"/>
+    <line x1="10" y1="30" x2="70" y2="30"/>
+    <line x1="10" y1="35" x2="70" y2="35"/>
+  </g>
+  
+  <!-- Treble clef -->
+  <text x="12" y="32" font-family="serif" font-size="16" fill="white">𝄞</text>
+  
+  <!-- Notes -->
+  <circle cx="35" cy="25" r="2.5" fill="white"/>
+  <circle cx="45" cy="20" r="2.5" fill="white"/>
+  <circle cx="55" cy="30" r="2.5" fill="white"/>
+  
+  <!-- Note stems -->
+  <line x1="37.5" y1="25" x2="37.5" y2="15" stroke="white" stroke-width="1"/>
+  <line x1="47.5" y1="20" x2="47.5" y2="10" stroke="white" stroke-width="1"/>
+  <line x1="57.5" y1="30" x2="57.5" y2="40" stroke="white" stroke-width="1"/>
+</svg>
