@@ -25,6 +25,71 @@ The system employs a **signal processing approach** rather than machine learning
 
 ---
 
+## 📊 Key Metrics Explained
+
+### What These Numbers Mean
+
+#### **SNR (Signal-to-Noise Ratio)**
+**What it is**: Measures how much louder your voice is compared to background noise.
+- **Formula**: `SNR = 20 × log10(Signal Power / Noise Power)`
+- **Units**: Decibels (dB)
+
+**Range Guide**:
+- **Excellent**: -10 dB to 0 dB (voice much louder than noise)
+- **Good**: -15 dB to -10 dB (clear voice detection)
+- **Acceptable**: -25 dB to -15 dB (usable but some interference)
+- **Poor**: Below -25 dB (too much noise, unreliable)
+
+**Current System**: -22.0 dB (Acceptable - works but could be cleaner)
+
+#### **VAD Confidence (Voice Activity Detection)**
+**What it is**: How sure the system is that you're actually singing/speaking (not silence or noise).
+- **Range**: 0% to 100%
+- **Purpose**: Prevents false note detection during quiet moments
+
+**Range Guide**:
+- **Excellent**: 85-100% (very confident voice detection)
+- **Good**: 70-84% (reliable voice detection)
+- **Acceptable**: 50-69% (some uncertainty but usable)
+- **Poor**: Below 50% (unreliable, lots of false triggers)
+
+**Current System**: 70-79.9% (Good - reliable detection)
+
+#### **Outliers**
+**What it is**: Number of "weird" pitch readings that don't match the pattern.
+- **Example**: If you're singing a steady note, outliers are the random wrong frequencies
+- **Impact**: Too many outliers = jumpy, unstable note display
+
+**Range Guide**:
+- **Excellent**: 0-5 outliers (rock solid stability)
+- **Good**: 6-20 outliers (stable with minor fluctuations)
+- **Acceptable**: 21-50 outliers (noticeable but usable)
+- **Poor**: 51-100 outliers (very jumpy display)
+- **Critical**: 100+ outliers (unusable, constant jumping)
+
+**Current System**: 72 outliers (Poor - still too jumpy, needs improvement)
+
+#### **Health Score**
+**What it is**: Overall system performance combining all metrics.
+- **Calculation**: Weighted average of SNR, VAD confidence, outlier count, and stability
+- **Range**: 0% to 100%
+
+**Range Guide**:
+- **Excellent**: 85-100% (professional-grade performance)
+- **Good**: 75-84% (reliable for training use)
+- **Acceptable**: 60-74% (usable but not optimal)
+- **Poor**: Below 60% (needs significant improvement)
+
+**Current System**: 65% (Acceptable - works but has room for improvement)
+
+### **Why These Matter for Solfège Training**
+- **Low SNR**: Background noise interferes with pitch detection
+- **Low VAD Confidence**: System might detect notes when you're not singing
+- **High Outliers**: Note display jumps around, making it hard to see your actual pitch
+- **Low Health Score**: Overall unreliable experience, frustrating for practice
+
+---
+
 ## 🔧 Component Analysis & Functionality
 
 ### 1. Enhanced YIN Algorithm (`enhanced_yin.dart`)
