@@ -227,7 +227,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
       ),
       body: Container(
         decoration: const BoxDecoration(
-          color: Color(0xFFF5F5DD),
+          color: Color(0xFFF8F4E1),
         ),
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())

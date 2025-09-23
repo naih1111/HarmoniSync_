@@ -74,6 +74,7 @@ flutter:
     - assets/
     - assets/fonts/
     - assets/logo/
+    - assets/sounds/
     - assets/metronome_icon.svg
     - assets/metronome.png
     - assets/sheet1.svg

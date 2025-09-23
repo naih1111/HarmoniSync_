@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../services/music_service.dart';
 import '../services/yin_algorithm.dart';
 import '../utils/note_utils.dart';
@@ -1347,16 +1348,25 @@ Component Health: ${performanceMetrics['componentHealth']}
   void _updateMetronome(double currentBeats, double metronomeBeatUnitSec) {
     if (!_metronomeEnabled) return;
    
-                final int targetBeat = currentBeats.floor();
-                const double clickDurationSec = 0.05; // 50ms
-                while (_lastWholeBeat < targetBeat) {
-                  _lastWholeBeat++;
-                  final int beatsPerMeasure = (_timeSigBeats ?? 4).clamp(1, 12);
-                  final bool isDownbeat = (_lastWholeBeat % beatsPerMeasure) == 0;
-                  final double beatStartSec = _lastWholeBeat * metronomeBeatUnitSec;
-                  if (beatStartSec + clickDurationSec <= _lastMeasurePosition) {
-                    _triggerMetronome(downbeat: isDownbeat);
-                  } else {
+    // Calculate target beat with a small look-ahead to compensate for audio latency
+    // This helps the metronome click sound to align better with the visual beat
+    final double lookAheadSec = 0.03; // 30ms look-ahead to compensate for audio latency
+    final double adjustedCurrentBeats = currentBeats + (lookAheadSec / metronomeBeatUnitSec);
+    final int targetBeat = adjustedCurrentBeats.floor();
+    
+    const double clickDurationSec = 0.05; // 50ms
+    
+    // Process any beats that need to be triggered
+    while (_lastWholeBeat < targetBeat) {
+      _lastWholeBeat++;
+      final int beatsPerMeasure = (_timeSigBeats ?? 4).clamp(1, 12);
+      final bool isDownbeat = (_lastWholeBeat % beatsPerMeasure) == 0;
+      final double beatStartSec = _lastWholeBeat * metronomeBeatUnitSec;
+      
+      // Only trigger if we're still within the valid playback range
+      if (beatStartSec + clickDurationSec <= _lastMeasurePosition) {
+        _triggerMetronome(downbeat: isDownbeat);
+      } else {
         break;
       }
     }
@@ -1642,48 +1652,31 @@ Component Health: ${performanceMetrics['componentHealth']}
     if (mounted) setState(() => _metronomeFlash = false);
   }
 
-  Future<void> _playMetronomeClick({bool downbeat = false}) async {
+  // Path to the metronome sound file
+  final String _metronomeSound = 'assets/sounds/metronome sound.mp3';
+  
+  // Play metronome click using the uploaded sound file
+  void _playMetronomeClick({bool downbeat = false}) {
     try {
-      if (!_metronomePlayer.isOpen()) {
-        try { await _metronomePlayer.openPlayer(); } catch (_) {}
-        if (!_metronomePlayer.isOpen()) {
-          // Fallback if we still cannot open
-          try { SystemSound.play(SystemSoundType.click); } catch (_) {}
-          return;
-        }
-      }
-      // Avoid cutting the click if it's still within its duration; otherwise, force stop to allow a new click
-      if (_metronomePlayer.isPlaying) {
-        final int nowUs = DateTime.now().microsecondsSinceEpoch;
-        final int elapsedMs = ((nowUs - _lastClickStartUs) / 1000).round();
-        if (elapsedMs < _clickDurationMs - 5) {
-          // Still in click window → skip retrigger to avoid cut
-          return;
-        }
-        // Click should have finished by now but player still reports playing → stop to start the next
-        try { await _metronomePlayer.stopPlayer(); } catch (_) {}
-      }
-      final Uint8List data = _generateClickPcm(
-        frequencyHz: downbeat ? 1400 : 1000,
-        durationMs: _clickDurationMs,
-        sampleRate: 44100,
-        amplitude: downbeat ? 0.6 : 0.4,
-      );
-      _lastClickStartUs = DateTime.now().microsecondsSinceEpoch;
-      try {
-        await _metronomePlayer.startPlayer(
-          fromDataBuffer: data,
-          codec: Codec.pcm16,
-          numChannels: 1,
-          sampleRate: 44100,
+      if (_metronomePlayer.isOpen()) {
+        // Play the metronome sound file
+        _metronomePlayer.startPlayer(
+          fromURI: _metronomeSound,
+          codec: Codec.mp3,
         );
-      } catch (_) {
-        // Fallback to system click if start failed
-        try { SystemSound.play(SystemSoundType.click); } catch (_) {}
+        
+        // Record timestamp for timing calculations
+        _lastClickStartUs = DateTime.now().microsecondsSinceEpoch;
+      } else {
+        // Fallback to system sound if player is not open
+        SystemSound.play(SystemSoundType.click);
+        _lastClickStartUs = DateTime.now().microsecondsSinceEpoch;
       }
     } catch (e) {
-      // As a fallback, try a system click
-      try { SystemSound.play(SystemSoundType.click); } catch (_) {}
+      print('Error playing metronome click: $e');
+      // Fallback to system sound on error
+      SystemSound.play(SystemSoundType.click);
+      _lastClickStartUs = DateTime.now().microsecondsSinceEpoch;
     }
   }
 
@@ -1694,34 +1687,25 @@ Component Health: ${performanceMetrics['componentHealth']}
     if (_currentTime >= _lastMeasurePosition || !_isPlaying) {
       return;
     }
+    
+    // Play the click sound immediately without waiting
     _playMetronomeClick(downbeat: downbeat);
+    
+    // Update visual feedback with minimal delay
     if (mounted) {
-      setState(() => _metronomeFlash = true);
-      Timer(const Duration(milliseconds: 120), () {
-        if (mounted) setState(() => _metronomeFlash = false);
+      // Use microtask to prioritize UI update
+      Future.microtask(() {
+        if (mounted) setState(() => _metronomeFlash = true);
+        
+        // Schedule flash off with shorter duration for better sync with audio
+        Timer(const Duration(milliseconds: 100), () {
+          if (mounted) setState(() => _metronomeFlash = false);
+        });
       });
     }
   }
 
-  Uint8List _generateClickPcm({
-    required double frequencyHz,
-    required int durationMs,
-    required int sampleRate,
-    required double amplitude,
-  }) {
-    final int totalSamples = (sampleRate * durationMs / 1000).round();
-    final Int16List samples = Int16List(totalSamples);
-    final double twoPiF = 2 * math.pi * frequencyHz;
-
-    for (int i = 0; i < totalSamples; i++) {
-      final double t = i / sampleRate;
-      // Simple short sine with exponential decay for a clicky feel
-      final double envelope = math.exp(-20 * t); // fast decay
-      final double s = math.sin(twoPiF * t) * amplitude * envelope;
-      samples[i] = (s * 32767).clamp(-32768.0, 32767.0).toInt();
-    }
-    return samples.buffer.asUint8List();
-  }
+  // PCM generation function removed as we're now using the uploaded sound file
 
   @override
   Widget build(BuildContext context) {
@@ -2099,9 +2083,10 @@ Component Health: ${performanceMetrics['componentHealth']}
                           width: 50,
                           height: 50,
                           child: IconButton(
-                            icon: Icon(
-                              Icons.music_note,
-                              size: 24,
+                            icon: Image.asset(
+                              'assets/metronome.png',
+                              width: 24,
+                              height: 24,
                               color: _metronomeEnabled ? Colors.blue : const Color(0xFF8B4511),
                             ),
                             onPressed: () {

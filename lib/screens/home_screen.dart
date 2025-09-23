@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'main_navigation_screen.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -50,7 +51,14 @@ class HomeScreen extends StatelessWidget {
                           )
                         ],
                       ),
-                      child: const Icon(Icons.queue_music_rounded, color: Color(0xFFF5F5DD), size: 40),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/App Logo.png',
+                          fit: BoxFit.cover,
+                          width: 88,
+                          height: 88,
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 28),
                     Text(
