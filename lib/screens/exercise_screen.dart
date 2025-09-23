@@ -956,7 +956,7 @@ Component Health: ${performanceMetrics['componentHealth']}
                               Text(
                                 tempIsMaleSinger ? 'Male Singer' : 'Female Singer',
                                 style: TextStyle(
-                                  color: Color(0xFFF5F5DD),
+                                  color: Color(0xFF543310),
                                   fontSize: 18,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -982,7 +982,7 @@ Component Health: ${performanceMetrics['componentHealth']}
                         ? 'Optimized for male vocal range (80-400 Hz)'
                         : 'Optimized for female vocal range (150-800 Hz)',
                       style: TextStyle(
-                        color: Color(0xFFF5F5DD).withOpacity(0.7),
+                        color: Color(0xFF543310).withOpacity(0.7),
                         fontSize: 14,
                         fontStyle: FontStyle.italic,
                       ),

@@ -594,6 +594,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 16,
+                color: Color(0xFF543310),
               ),
               overflow: TextOverflow.ellipsis,
             ),

@@ -34,7 +34,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   // For Android Emulator: 'http://10.0.2.2:5000'
   // For Physical Device: 'http://192.168.100.51:5000' (your computer's IP)
   // For Desktop/Web: 'http://localhost:5000'
-  static const String _serverUrl = 'http://192.168.1.20:5000';
+  static const String _serverUrl = 'http://192.168.1.6:5000';
   bool _isConverting = false; // Track conversion status
   bool _isPickingFile = false; // Track file picking status
   bool _isOpeningFile = false; // Track file opening status
@@ -63,6 +63,20 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   void dispose() {
     _loaderController.dispose();
     super.dispose();
+  }
+
+  /// Check if the device is running Android 11 (API 30) or higher
+  Future<bool> _isAndroid11OrHigher() async {
+    if (!Platform.isAndroid) return false;
+    
+    try {
+      // Use a simple approach - try to check if MANAGE_EXTERNAL_STORAGE permission exists
+      // This permission was introduced in Android 11 (API 30)
+      final status = await Permission.manageExternalStorage.status;
+      return true; // If we can check the status, the permission exists (Android 11+)
+    } catch (e) {
+      return false; // If there's an error, likely Android 10 or below
+    }
   }
 
   /// Load previously converted items from SharedPreferences and scan for existing files
@@ -178,31 +192,45 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
     try {
       // Request storage permission on Android
       if (Platform.isAndroid) {
-        // For Android 13+ (API 33+), use different permissions
-        var status = await Permission.manageExternalStorage.status;
-        if (!status.isGranted) {
-          status = await Permission.manageExternalStorage.request();
+        PermissionStatus status;
+        
+        // Check Android API level and request appropriate permissions
+        if (await _isAndroid11OrHigher()) {
+          // Android 11+ (API 30+) - Use MANAGE_EXTERNAL_STORAGE for full access
+          status = await Permission.manageExternalStorage.status;
           if (!status.isGranted) {
-            // Fallback to storage permission for older Android versions
-            status = await Permission.storage.status;
+            status = await Permission.manageExternalStorage.request();
+            
+            // If MANAGE_EXTERNAL_STORAGE is denied, try READ_EXTERNAL_STORAGE as fallback
             if (!status.isGranted) {
-              status = await Permission.storage.request();
+              status = await Permission.storage.status;
               if (!status.isGranted) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Storage permission is required to select PDF files'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                }
-                setState(() {
-                  _isPickingFile = false;
-                });
-                return;
+                status = await Permission.storage.request();
               }
             }
           }
+        } else {
+          // Android 10 and below - Use READ_EXTERNAL_STORAGE
+          status = await Permission.storage.status;
+          if (!status.isGranted) {
+            status = await Permission.storage.request();
+          }
+        }
+        
+        // Check final permission status
+        if (!status.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Storage permission is required to select PDF files'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          setState(() {
+            _isPickingFile = false;
+          });
+          return;
         }
       }
 
@@ -309,18 +337,8 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
             );
           }
           return;
-        } else {
-          // Show success message with debug info
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Music content detected! Processing PDF...'),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 2),
-              ),
-            );
-          }
         }
+        // Removed the success message - let the conversion result speak for itself
 
         setState(() {
           _currentConvertingName = file.name;
@@ -364,27 +382,60 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Delete File'),
-          content: Text('Are you sure you want to delete "$fileName"?\n\nThis action cannot be undone.'),
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: _brandPrimary.withOpacity(0.2), width: 1),
+          ),
+          title: Text(
+            'Delete File',
+            style: TextStyle(
+              color: _brandPrimary,
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+            ),
+          ),
+          content: Text(
+            'Are you sure you want to delete "$fileName"?\n\nThis action cannot be undone.',
+            style: TextStyle(
+              color: _brandAccent,
+              fontSize: 16,
+              height: 1.4,
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
               style: TextButton.styleFrom(
-                foregroundColor: Colors.grey[600],
-                backgroundColor: Colors.grey[100],
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                foregroundColor: _brandAccent,
+                backgroundColor: Colors.grey[50],
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: Colors.grey[300]!, width: 1),
+                ),
               ),
-              child: const Text('Cancel'),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
               style: TextButton.styleFrom(
                 foregroundColor: Colors.white,
-                backgroundColor: Colors.red,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                backgroundColor: _brandPrimary,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 2,
               ),
-              child: const Text('Delete'),
+              child: const Text(
+                'Delete',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         );
@@ -653,153 +704,357 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       final fileSize = await pdfFile.length();
       print('PDF file size: ${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB');
       
-      // For very large files (>10MB), use quick validation only
-      if (fileSize > 10 * 1024 * 1024) {
+      // For very large files (>15MB), use quick validation only
+      if (fileSize > 15 * 1024 * 1024) {
         print('Large PDF detected, using quick validation');
         return await _quickValidateByFilename(pdfFile);
       }
       
-      // Read a larger portion for better image analysis (64KB)
+      // Read a larger portion for better analysis (128KB)
       final file = await pdfFile.open();
-      final bytes = await file.read(64 * 1024); // 64KB limit for better image detection
+      final bytes = await file.read(128 * 1024); // 128KB for comprehensive analysis
       await file.close();
       
       int confidence = 0;
+      bool hasStrongIndicator = false;
       
-      // Strategy 1: Check PDF header and early metadata
+      // Strategy 1: Check PDF header and metadata
       final content = String.fromCharCodes(bytes);
+      final lowerContent = content.toLowerCase();
       
-      // Look for PDF metadata that might indicate music content
+      // Enhanced music metadata detection
       final musicMetadata = [
         'music', 'sheet', 'score', 'notation', 'musical', 'composition',
         'symphony', 'sonata', 'concerto', 'etude', 'prelude', 'fugue',
-        'sibelius', 'finale', 'musescore', 'dorico', 'lilypond'
+        'chord', 'scale', 'melody', 'harmony', 'rhythm', 'tempo',
+        'key signature', 'time signature', 'bar', 'measure', 'beat',
+        'piano', 'violin', 'guitar', 'orchestra', 'band', 'choir'
       ];
       
-      final lowerContent = content.toLowerCase();
+      int metadataMatches = 0;
       for (final term in musicMetadata) {
         if (lowerContent.contains(term)) {
-          confidence += 15;
+          confidence += 10;
+          metadataMatches++;
           print('Found music metadata: $term');
         }
       }
       
-      // Strategy 2: Check for music notation software signatures
+      // Bonus for multiple metadata matches
+      if (metadataMatches >= 3) {
+        confidence += 20;
+        hasStrongIndicator = true;
+        print('Multiple music metadata found - strong indicator');
+      }
+      
+      // Strategy 2: Enhanced music software signatures
       final softwareSignatures = [
         'sibelius', 'finale', 'musescore', 'dorico', 'lilypond',
-        'notion', 'overture', 'capella', 'forte', 'scorewriter'
+        'notion', 'overture', 'capella', 'forte', 'scorewriter',
+        'encore', 'printmusic', 'harmony assistant', 'guitar pro'
       ];
       
       for (final signature in softwareSignatures) {
         if (lowerContent.contains(signature)) {
-          confidence += 25;
+          confidence += 30;
+          hasStrongIndicator = true;
           print('Found music software signature: $signature');
         }
       }
       
-      // Strategy 3: Look for music-specific Unicode symbols (limited search)
+      // Strategy 3: Enhanced music symbols detection
       final musicSymbols = [
         '♪', '♫', '♬', '♭', '♯', '♮', // Basic symbols
         '𝄞', '𝄢', '𝄡', '𝄟', // Clefs
+        '𝄐', '𝄑', '𝄒', '𝄓', // Time signatures
+        '𝅝', '𝅗𝅥', '𝅘𝅥', '𝅘𝅥𝅮', '𝅘𝅥𝅯', // Note values
+        '𝄽', '𝄾', '𝄿', '𝅀', '𝅁', '𝅂' // Rests
       ];
       
+      int symbolCount = 0;
       for (final symbol in musicSymbols) {
         if (content.contains(symbol)) {
-          confidence += 20;
+          confidence += 25;
+          symbolCount++;
+          hasStrongIndicator = true;
           print('Found music symbol: $symbol');
         }
       }
       
-      // Strategy 4: Check for staff-related keywords (limited list)
+      // Strategy 4: Enhanced staff and notation keywords
       final staffKeywords = [
-        'staff', 'stave', 'clef', 'treble', 'bass', 'measure', 'note'
+        'staff', 'stave', 'clef', 'treble', 'bass', 'alto', 'tenor',
+        'measure', 'bar', 'note', 'rest', 'sharp', 'flat', 'natural',
+        'key', 'time', 'signature', 'accidental', 'articulation'
       ];
       
+      int staffMatches = 0;
       for (final keyword in staffKeywords) {
         if (lowerContent.contains(keyword)) {
-          confidence += 8;
+          confidence += 12;
+          staffMatches++;
           print('Found staff keyword: $keyword');
         }
       }
       
-      // Enhanced image analysis for scanned music sheets
-      final imageConfidence = await _analyzeImageContent(bytes);
+      // Bonus for multiple staff-related terms
+      if (staffMatches >= 4) {
+        confidence += 15;
+        print('Multiple staff terms found');
+      }
+      
+      // Strategy 5: Check for musical terms and expressions
+      final musicalTerms = [
+        'allegro', 'andante', 'adagio', 'largo', 'presto', 'moderato',
+        'forte', 'piano', 'crescendo', 'diminuendo', 'legato', 'staccato',
+        'ritardando', 'accelerando', 'fermata', 'da capo', 'dal segno',
+        'coda', 'fine', 'repeat', 'volta', 'segno'
+      ];
+      
+      int termMatches = 0;
+      for (final term in musicalTerms) {
+        if (lowerContent.contains(term)) {
+          confidence += 8;
+          termMatches++;
+          print('Found musical term: $term');
+        }
+      }
+      
+      if (termMatches >= 3) {
+        confidence += 12;
+        print('Multiple musical terms found');
+      }
+      
+      // Strategy 6: Enhanced image analysis for scanned music sheets
+      final imageConfidence = await _analyzeImageContentEnhanced(bytes);
       confidence += imageConfidence;
+      print('Enhanced image analysis confidence: $imageConfidence');
+      
+      // Strategy 7: Check for PDF structure patterns typical of music scores
+      final structureConfidence = _analyzeDocumentStructure(content);
+      confidence += structureConfidence;
+      print('Document structure confidence: $structureConfidence');
+      
+      // Set strong indicator based on multiple factors
+      if (imageConfidence >= 20 || structureConfidence >= 15 || 
+          (imageConfidence >= 10 && structureConfidence >= 8)) {
+        hasStrongIndicator = true;
+        print('Strong indicator set from enhanced analysis');
+      }
       
       print('Music content validation confidence score: $confidence');
+      print('Has strong indicator: $hasStrongIndicator');
       
-      // Adjusted threshold for better image-based detection
-      return confidence >= 12;
+      // Multi-tier validation logic:
+      // 1. Very high confidence (50+) - definitely music
+      // 2. High confidence (35+) with strong indicators - likely music  
+      // 3. Moderate confidence (25+) with multiple strong indicators - possibly music
+      bool isValid = false;
+      
+      if (confidence >= 50) {
+        isValid = true;
+        print('Very high confidence validation passed');
+      } else if (confidence >= 35 && hasStrongIndicator) {
+        isValid = true;
+        print('High confidence with strong indicators validation passed');
+      } else if (confidence >= 25 && hasStrongIndicator && 
+                 (imageConfidence >= 15 || structureConfidence >= 10)) {
+        isValid = true;
+        print('Moderate confidence with multiple indicators validation passed');
+      }
+      
+      print('Final validation result: $isValid (confidence: $confidence, hasStrongIndicator: $hasStrongIndicator)');
+      return isValid;
       
     } catch (e) {
       print('Error validating music content: $e');
-      // If validation fails, allow conversion to proceed
-      return true;
+      // If validation fails, be conservative and reject
+      return false;
     }
   }
   
-  /// Analyze image content for music-specific patterns
-   Future<int> _analyzeImageContent(Uint8List bytes) async {
-     try {
-       int confidence = 0;
-       final content = String.fromCharCodes(bytes);
-       final lowerContent = content.toLowerCase();
-       
-       // Count image references and types
-       final imagePatterns = ['/image', '/xobject', 'jpeg', 'jpg', 'png'];
-       int imageCount = 0;
-       for (final pattern in imagePatterns) {
-         imageCount += pattern.allMatches(lowerContent).length;
-       }
-       
-       if (imageCount > 3) {
-         confidence += 15;
-         print('Found significant image content: $imageCount references');
-         
-         // Additional points for high image density (likely scanned sheets)
-         if (imageCount > 10) {
-           confidence += 10;
-           print('High image density detected - likely scanned document');
-         }
-       }
-       
-       // Look for image compression patterns typical of scanned music
-       final compressionPatterns = ['flatedecode', 'dctdecode', 'ccittfaxdecode'];
-       for (final pattern in compressionPatterns) {
-         if (lowerContent.contains(pattern)) {
-           confidence += 8;
-           print('Found image compression pattern: $pattern');
-         }
-       }
-       
-       // Check for high-resolution indicators (music sheets are often high-res)
-       final resolutionPatterns = ['300', '600', '1200']; // Common DPI values
-       for (final dpi in resolutionPatterns) {
-         if (content.contains(dpi)) {
-           confidence += 5;
-           print('Found high-resolution indicator: ${dpi} DPI');
-         }
-       }
-       
-       // Look for grayscale or monochrome patterns (typical of sheet music)
-       final colorSpacePatterns = ['devicegray', 'devicecmyk', '/gray'];
-       for (final pattern in colorSpacePatterns) {
-         if (lowerContent.contains(pattern)) {
-           confidence += 7;
-           print('Found grayscale/monochrome pattern: $pattern');
-         }
-       }
-       
-       // Advanced pattern detection for scanned music sheets
-       confidence += _detectStaffLinePatterns(bytes);
-       confidence += _detectMusicSymbolPatterns(bytes);
-       
-       return confidence;
-     } catch (e) {
-       print('Error analyzing image content: $e');
-       return 0;
-     }
-   }
+  /// Enhanced image content analysis for music-specific patterns
+  Future<int> _analyzeImageContentEnhanced(Uint8List bytes) async {
+    try {
+      int confidence = 0;
+      final content = String.fromCharCodes(bytes);
+      final lowerContent = content.toLowerCase();
+      
+      // Count image references and types with better scoring
+      final imagePatterns = ['/image', '/xobject', 'jpeg', 'jpg', 'png', 'tiff', 'bmp'];
+      int imageCount = 0;
+      for (final pattern in imagePatterns) {
+        imageCount += pattern.allMatches(lowerContent).length;
+      }
+      
+      if (imageCount > 0) {
+        // Progressive scoring based on image density
+        if (imageCount <= 3) {
+          confidence += 8; // Few images
+        } else if (imageCount <= 10) {
+          confidence += 15; // Moderate image content
+        } else if (imageCount <= 25) {
+          confidence += 25; // High image density - likely scanned
+        } else {
+          confidence += 35; // Very high density - definitely scanned document
+        }
+        print('Found image content: $imageCount references (confidence: +${confidence})');
+      }
+      
+      // Enhanced compression pattern detection
+      final compressionPatterns = [
+        'flatedecode', 'dctdecode', 'ccittfaxdecode', 'lzwdecode',
+        'runlengthdecode', 'jbig2decode', 'jpxdecode'
+      ];
+      int compressionMatches = 0;
+      for (final pattern in compressionPatterns) {
+        if (lowerContent.contains(pattern)) {
+          confidence += 6;
+          compressionMatches++;
+          print('Found compression pattern: $pattern');
+        }
+      }
+      
+      // Bonus for multiple compression types (typical of complex documents)
+      if (compressionMatches >= 3) {
+        confidence += 10;
+        print('Multiple compression types found - complex document');
+      }
+      
+      // Enhanced resolution detection
+      final highResPatterns = [
+        '300 dpi', '600 dpi', '1200 dpi', '2400 dpi',
+        '/width 1200', '/width 1800', '/width 2400', '/width 3600',
+        '/height 1600', '/height 2400', '/height 3200'
+      ];
+      
+      int resolutionMatches = 0;
+      for (final pattern in highResPatterns) {
+        if (lowerContent.contains(pattern)) {
+          confidence += 8;
+          resolutionMatches++;
+          print('Found high-resolution indicator: $pattern');
+        }
+      }
+      
+      // Enhanced grayscale/monochrome detection (typical of sheet music)
+      final colorSpacePatterns = [
+        'devicegray', 'devicecmyk', '/gray', 'grayscale',
+        'monochrome', 'blackandwhite', '/bitspercomponent 1'
+      ];
+      
+      int colorSpaceMatches = 0;
+      for (final pattern in colorSpacePatterns) {
+        if (lowerContent.contains(pattern)) {
+          confidence += 7;
+          colorSpaceMatches++;
+          print('Found grayscale/monochrome pattern: $pattern');
+        }
+      }
+      
+      // Check for document structure typical of sheet music
+      final structuralPatterns = [
+        '/pages', '/page', '/contents', '/resources',
+        '/font', '/fontdescriptor', '/encoding'
+      ];
+      
+      int structuralMatches = 0;
+      for (final pattern in structuralPatterns) {
+        structuralMatches += pattern.allMatches(lowerContent).length;
+      }
+      
+      // Multiple pages with consistent structure suggests sheet music
+      if (structuralMatches > 10) {
+        confidence += 12;
+        print('Complex document structure detected');
+      }
+      
+      // Advanced pattern detection for scanned music sheets
+      confidence += _detectStaffLinePatterns(bytes);
+      confidence += _detectMusicSymbolPatterns(bytes);
+      
+      // Check for OCR-related patterns (common in scanned documents)
+      final ocrPatterns = ['ocr', 'text recognition', 'scanned', 'digitized'];
+      for (final pattern in ocrPatterns) {
+        if (lowerContent.contains(pattern)) {
+          confidence += 10;
+          print('Found OCR/scanning indicator: $pattern');
+        }
+      }
+      
+      return confidence;
+    } catch (e) {
+      print('Error analyzing enhanced image content: $e');
+      return 0;
+    }
+  }
+  
+  /// Analyze document structure for music score patterns
+  int _analyzeDocumentStructure(String content) {
+    try {
+      int confidence = 0;
+      final lowerContent = content.toLowerCase();
+      
+      // Check for multi-page structure (typical of sheet music)
+      final pageCount = '/page'.allMatches(lowerContent).length;
+      if (pageCount > 1) {
+        confidence += math.min(pageCount * 3, 15); // Max 15 points for pages
+        print('Multi-page document detected: $pageCount pages');
+      }
+      
+      // Check for font patterns typical of music notation
+      final musicFontPatterns = [
+        'bravura', 'emmentaler', 'gonville', 'lilyjazz', 'feta',
+        'musicology', 'opus', 'petrucci', 'sebastian', 'sonora'
+      ];
+      
+      for (final font in musicFontPatterns) {
+        if (lowerContent.contains(font)) {
+          confidence += 20;
+          print('Found music notation font: $font');
+        }
+      }
+      
+      // Check for vector graphics patterns (common in digital scores)
+      final vectorPatterns = [
+        '/path', '/moveto', '/lineto', '/curveto', '/closepath',
+        'bezier', 'spline', 'vector'
+      ];
+      
+      int vectorMatches = 0;
+      for (final pattern in vectorPatterns) {
+        vectorMatches += pattern.allMatches(lowerContent).length;
+      }
+      
+      if (vectorMatches > 20) {
+        confidence += 15;
+        print('Complex vector graphics detected - likely digital score');
+      }
+      
+      // Check for metadata patterns
+      final metadataPatterns = [
+        '/title', '/subject', '/author', '/creator', '/producer',
+        '/creationdate', '/moddate', '/keywords'
+      ];
+      
+      int metadataCount = 0;
+      for (final pattern in metadataPatterns) {
+        if (lowerContent.contains(pattern)) {
+          metadataCount++;
+        }
+      }
+      
+      if (metadataCount >= 4) {
+        confidence += 8;
+        print('Rich metadata found - professional document');
+      }
+      
+      return confidence;
+    } catch (e) {
+      print('Error analyzing document structure: $e');
+      return 0;
+    }
+  }
 
   /// Detect staff line patterns in binary data
   int _detectStaffLinePatterns(Uint8List bytes) {
@@ -1096,7 +1351,17 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
           : null,
       body: Container(
         decoration: const BoxDecoration(
-          color: Color(0xFFF5F5DD),
+          gradient: LinearGradient(
+            begin: Alignment(-0.9, -0.8),
+            end: Alignment(1.0, 0.9),
+            colors: [
+              Color(0xFFFFF9C4),
+              Color(0xFFFFECB3),
+              Color(0xFFE3F2FD),
+              Color(0xFFBBDEFB),
+            ],
+            stops: [0.0, 0.35, 0.7, 1.0],
+          ),
         ),
         child: Stack(
           children: [
@@ -1240,14 +1505,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
                                               tooltip: _isOpeningFile ? 'Opening...' : 'Open',
                                               onPressed: _isOpeningFile ? null : () => _openMusicSheet(item['path'] ?? '', item['name'] ?? ''),
                                             ),
-                                            IconButton(
-                                              icon: const Icon(Icons.ios_share),
-                                              color: _brandAccent,
-                                              tooltip: 'Share',
-                                              onPressed: () {
-                                                // share hook
-                                              },
-                                            ),
+
                                             IconButton(
                                               icon: const Icon(Icons.delete_outline),
                                               color: Colors.red,
@@ -1394,7 +1652,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
                       
                       // Status text
                       Text(
-                        'Converting PDF to Music',
+                        'Validating & Converting PDF to Music',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
