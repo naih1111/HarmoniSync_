@@ -34,7 +34,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   // For Android Emulator: 'http://10.0.2.2:5000'
   // For Physical Device: 'http://192.168.100.51:5000' (your computer's IP)
   // For Desktop/Web: 'http://localhost:5000'
-  static const String _serverUrl = 'http://192.168.1.4:5000';
+  static const String _serverUrl = 'http://192.168.1.20:5000';
   bool _isConverting = false; // Track conversion status
   bool _isPickingFile = false; // Track file picking status
   bool _isOpeningFile = false; // Track file opening status
@@ -1096,17 +1096,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
           : null,
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment(-0.9, -0.8),
-            end: Alignment(1.0, 0.9),
-            colors: [
-              Color(0xFFFFF9C4),
-              Color(0xFFFFECB3),
-              Color(0xFFE3F2FD),
-              Color(0xFFBBDEFB),
-            ],
-            stops: [0.0, 0.35, 0.7, 1.0],
-          ),
+          color: Color(0xFFF5F5DD),
         ),
         child: Stack(
           children: [

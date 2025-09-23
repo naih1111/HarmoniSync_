@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../services/music_service.dart';
 import '../widgets/music_sheet.dart';
 import '../database/database_helper.dart';
@@ -1631,10 +1632,10 @@ Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
                           width: 50,
                           height: 50,
                           child: IconButton(
-                            icon: Icon(
-                              Icons.music_note,
-                              size: 24,
-                              color: _metronomeEnabled ? Colors.blue : const Color(0xFF8B4511),
+                            icon: Image.asset(
+                              'assets/metronome.png',
+                              width: 24,
+                              height: 24,
                             ),
                             onPressed: () {
                               setState(() {

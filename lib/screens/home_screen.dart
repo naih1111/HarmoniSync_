@@ -25,16 +25,7 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
           ),
-          Positioned(
-            top: -50,
-            right: -30,
-            child: _DecorCircle(size: 200, color: theme.colorScheme.secondary.withOpacity(0.30)),
-          ),
-          Positioned(
-            bottom: -60,
-            left: -20,
-            child: _DecorCircle(size: 260, color: theme.colorScheme.primary.withOpacity(0.22)),
-          ),
+          // Decorative circles removed
           Center(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
@@ -49,7 +40,7 @@ class HomeScreen extends StatelessWidget {
                       width: 88,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: theme.colorScheme.primary,
+                        color: const Color(0xFF543310),
                         border: Border.all(color: theme.colorScheme.secondary, width: 3),
                         boxShadow: [
                           BoxShadow(
@@ -66,7 +57,7 @@ class HomeScreen extends StatelessWidget {
                       'Ready to practice?',
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.primary,
+                        color: const Color(0xFF543310),
                         letterSpacing: 0.8,
                       ),
                       textAlign: TextAlign.center,
@@ -75,7 +66,7 @@ class HomeScreen extends StatelessWidget {
                     Text(
                       'Start your next session and level up your musical ear.',
                       style: theme.textTheme.titleMedium?.copyWith(
-                        color: Colors.black.withOpacity(0.65),
+                        color: const Color(0xFF543310),
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -84,7 +75,7 @@ class HomeScreen extends StatelessWidget {
                       width: 220,
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
+                          backgroundColor: const Color(0xFF543310),
                           foregroundColor: Color(0xFFF5F5DD),
                           elevation: 0,
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
@@ -106,31 +97,6 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DecorCircle extends StatelessWidget {
-  final double size;
-  final Color color;
-  const _DecorCircle({required this.size, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: size,
-      width: size,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.4),
-            blurRadius: 36,
-            spreadRadius: 8,
           ),
         ],
       ),
