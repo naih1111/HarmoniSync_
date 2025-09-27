@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/music_service.dart';
 import '../utils/music_fonts.dart';
 import 'dart:math' as math;
+import 'dart:async';
 
 class MusicSheet extends StatefulWidget {
   final Score score;
@@ -25,34 +26,73 @@ class MusicSheet extends StatefulWidget {
   State<MusicSheet> createState() => _MusicSheetState();
 }
 
-class _MusicSheetState extends State<MusicSheet> with SingleTickerProviderStateMixin {
+class _MusicSheetState extends State<MusicSheet> with TickerProviderStateMixin {
   ScrollController? _scrollController;
   late AnimationController _highlightController;
+  late AnimationController _scrollAnimationController;
   late Animation<double> _highlightAnimation;
   late Animation<Color?> _glowColorAnimation;
+  late Animation<double> _scrollAnimation;
   double _currentX = 0.0;
+  double _lastTargetX = 0.0;
+  int _lastMeasure = -1;
+  bool _isScrolling = false;
+  Timer? _scrollTimer;
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
+    
     _highlightController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
+    
+    _scrollAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800), // Smooth scroll duration
+    );
+    
     _highlightAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _highlightController, curve: Curves.easeInOut),
     );
+    
     _glowColorAnimation = ColorTween(
       begin: Colors.transparent,
-      end: widget.isCorrect ? Colors.green.withOpacity(0.5) : Colors.red.withOpacity(0.5),
+      end: widget.isCorrect ? Colors.green.withValues(alpha: 0.5) : Colors.red.withValues(alpha: 0.5),
     ).animate(_highlightController);
+    
+    _scrollAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _scrollAnimationController, 
+        curve: Curves.easeInOutCubic, // Smooth easing curve
+      ),
+    );
+    
+    _scrollAnimation.addListener(() {
+      if (_scrollController != null && _scrollController!.hasClients) {
+        final currentScroll = _scrollController!.offset;
+        final targetScroll = _lastTargetX;
+        final newScroll = currentScroll + (targetScroll - currentScroll) * _scrollAnimation.value;
+        _scrollController!.jumpTo(newScroll);
+      }
+    });
+    
+    _scrollAnimationController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _isScrolling = false;
+        _scrollAnimationController.reset();
+      }
+    });
   }
 
   @override
   void dispose() {
     _scrollController?.dispose();
     _highlightController.dispose();
+    _scrollAnimationController.dispose();
+    _scrollTimer?.cancel();
     super.dispose();
   }
 
@@ -66,15 +106,23 @@ class _MusicSheetState extends State<MusicSheet> with SingleTickerProviderStateM
       // Update glow color when correctness changes
       _glowColorAnimation = ColorTween(
         begin: Colors.transparent,
-        end: widget.isCorrect ? Colors.green.withOpacity(0.5) : Colors.red.withOpacity(0.5),
+        end: widget.isCorrect ? Colors.green.withValues(alpha: 0.5) : Colors.red.withValues(alpha: 0.5),
       ).animate(_highlightController);
     }
   }
 
   void _updateScrollPosition() {
+    // Throttle scroll updates to reduce lag
+    _scrollTimer?.cancel();
+    _scrollTimer = Timer(const Duration(milliseconds: 100), () {
+      _performScrollUpdate();
+    });
+  }
+
+  void _performScrollUpdate() {
     // Calculate the x position based on current time and BPM
     const double secondsPerMinute = 60.0;
-    final double beatDuration = secondsPerMinute / widget.bpm; // Use widget.bpm instead of hardcoded tempo
+    final double beatDuration = secondsPerMinute / widget.bpm;
     
     // Calculate which measure we should be showing based on current time
     final double currentBeats = widget.currentTime / beatDuration;
@@ -85,20 +133,30 @@ class _MusicSheetState extends State<MusicSheet> with SingleTickerProviderStateM
       return;
     }
     
-    // Calculate the scroll position for the current measure
-    final double measureWidth = 155.0; // Base measure width
-    final double targetX = currentMeasure * measureWidth;
+    // Calculate the scroll position for the current measure with smoother transitions
+    final double measureWidth = 155.0;
+    final double beatsIntoMeasure = currentBeats % widget.score.beats;
+    final double progressInMeasure = beatsIntoMeasure / widget.score.beats;
     
-    // Animate to the new position
-    _scrollController?.animateTo(
-      targetX,
-      duration: const Duration(milliseconds: 500),
-      curve: Curves.easeInOut,
-    );
+    // Smooth scrolling: interpolate between current and next measure
+    final double baseX = currentMeasure * measureWidth;
+    final double targetX = baseX + (progressInMeasure * measureWidth * 0.8); // 0.8 for smoother feel
     
-    setState(() {
+    // Only scroll if the target position has changed significantly and we're not already scrolling
+    if ((targetX - _lastTargetX).abs() > 10.0 && !_isScrolling) {
+      _lastTargetX = targetX;
+      _isScrolling = true;
+      
+      // Adjust animation duration based on distance for more natural feel
+      final distance = (targetX - (_scrollController?.offset ?? 0)).abs();
+      final duration = (distance / 200.0 * 600).clamp(200.0, 1000.0); // Scale duration with distance
+      
+      _scrollAnimationController.duration = Duration(milliseconds: duration.round());
+      _scrollAnimationController.forward();
+      
+      // Update _currentX for the painter
       _currentX = targetX;
-    });
+    }
   }
 
   @override
@@ -114,31 +172,42 @@ class _MusicSheetState extends State<MusicSheet> with SingleTickerProviderStateM
       child: Container(
         padding: const EdgeInsets.all(20),
         width: totalWidth,
-        child: CustomPaint(
-          painter: MusicSheetPainter(
-            score: widget.score,
-            currentX: _currentX,
-            isPlaying: widget.isPlaying,
-            currentNoteIndex: widget.currentNoteIndex,
-            currentTime: widget.currentTime,
-            bpm: widget.bpm,
-            isCorrect: widget.isCorrect,
-          ),
-          size: Size(totalWidth, 300),
+        child: Stack(
+          children: [
+            // Static background layer - only repaints when score changes
+            RepaintBoundary(
+              child: CustomPaint(
+                painter: MusicSheetBackgroundPainter(
+                  score: widget.score,
+                ),
+                size: Size(totalWidth, 300),
+              ),
+            ),
+            // Dynamic overlay layer - only repaints when playback state changes
+            RepaintBoundary(
+              child: CustomPaint(
+                painter: MusicSheetOverlayPainter(
+                  score: widget.score,
+                  currentX: _currentX,
+                  isPlaying: widget.isPlaying,
+                  currentNoteIndex: widget.currentNoteIndex,
+                  currentTime: widget.currentTime,
+                  bpm: widget.bpm,
+                  isCorrect: widget.isCorrect,
+                ),
+                size: Size(totalWidth, 300),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class MusicSheetPainter extends CustomPainter {
+class MusicSheetBackgroundPainter extends CustomPainter {
   final Score score;
-  final double currentX;
-  final bool isPlaying;
-  final int currentNoteIndex;
-  final double currentTime;  // Add currentTime parameter
-  final double bpm;  // Add BPM parameter
-  final bool isCorrect; // Add isCorrect parameter
+  
   // Standard music engraving measurements
   static const double staffSpacing = 10.0;   // Space between staff lines
   static const double lineWidth = 1.2;      // Staff line thickness
@@ -153,14 +222,8 @@ class MusicSheetPainter extends CustomPainter {
   static const double staffStartY = 50.0;   // Top margin for staff
   static const double clefOffset = 85.0;     // Vertical offset for treble clef
 
-  MusicSheetPainter({
+  MusicSheetBackgroundPainter({
     required this.score,
-    required this.currentX,
-    required this.isPlaying,
-    required this.currentNoteIndex,
-    required this.currentTime,  // Add currentTime to constructor
-    required this.bpm,  // Add BPM to constructor
-    required this.isCorrect, // Add isCorrect to constructor
   });
 
   // Map to store slur start positions by slur number
@@ -187,8 +250,16 @@ class MusicSheetPainter extends CustomPainter {
     // Draw time signature
     _drawTimeSignature(canvas, size, paint);
 
-    // Draw measures and notes with glow effect
+    // Draw measures and notes WITHOUT highlighting
     _drawMeasures(canvas, size, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    if (oldDelegate is! MusicSheetBackgroundPainter) return true;
+    
+    // Only repaint if the score itself changes
+    return oldDelegate.score != score;
   }
 
   void _drawStaff(Canvas canvas, Size size, Paint paint) {
@@ -699,60 +770,6 @@ class MusicSheetPainter extends CustomPainter {
       noteX = x - textPainter.width / 2;
     }
     final noteY = y - textPainter.height / 2;
-
-    // Calculate the total note index and timing
-    int totalNoteIndex = 0;
-    double totalBeats = 0.0;
-    bool isCurrentNote = false;
-
-    // Calculate total beats up to this note
-    for (int m = 0; m < measureIndex; m++) {
-      final measure = score.measures[m];
-      for (final measureNote in measure.notes) {
-        totalBeats += _getNoteDuration(measureNote);
-      }
-    }
-
-    // Add beats from current measure up to this note
-    final currentMeasure = score.measures[measureIndex];
-    for (int i = 0; i < noteIndex; i++) {
-      totalBeats += _getNoteDuration(currentMeasure.notes[i]);
-    }
-
-    // Calculate if this is the current note based on time
-    if (isPlaying) {
-      const double secondsPerMinute = 60.0;
-      final double beatDuration = secondsPerMinute / bpm;  // Use the BPM from the widget
-      final double currentBeats = currentTime / beatDuration;
-      
-      isCurrentNote = currentBeats >= totalBeats && 
-                     currentBeats < totalBeats + _getNoteDuration(note);
-    }
-
-    // Draw highlight if this is the current note
-    if (isPlaying && isCurrentNote && !note.isRest) {
-      // Draw the highlight circle
-      final highlightPaint = Paint()
-        ..color = isCorrect ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
-        ..style = PaintingStyle.fill;
-      
-      canvas.drawCircle(
-        Offset(noteX + textPainter.width/2, noteY + textPainter.height/2),
-        noteSize * 0.8,
-        highlightPaint,
-      );
-
-      // Add a glow effect
-      final glowPaint = Paint()
-        ..color = isCorrect ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
-      
-      canvas.drawCircle(
-        Offset(noteX + textPainter.width/2, noteY + textPainter.height/2),
-        noteSize * 1.5,
-        glowPaint,
-      );
-    }
 
     // For half and whole notes, ensure crisp edges with proper stroke width
     if (note.type == 'half' || note.type == 'whole') {
@@ -1306,175 +1323,9 @@ class MusicSheetPainter extends CustomPainter {
     final firstNoteObj = firstNote['note'];
     final lastNoteObj = lastNote['note'];
     
-    // Determine if we need single or double beams (for eighth vs sixteenth)
-    final needsDoubleBeam = firstNoteObj.type == '16th' || lastNoteObj.type == '16th';
-    
-    // Calculate stem direction based on average note position and note stem directions
-    double sumY = 0;
-    bool forcedStemDirection = false;
-    String stemDirection = '';
-    
-    // Check if any notes have an explicit stem direction
-    for (final idx in group) {
-      final notePos = notePositions[idx];
-      final note = notePos['note'];
-      sumY += notePos['y'];
-      
-      if (note.stemDirection == 'up' || note.stemDirection == 'down') {
-        forcedStemDirection = true;
-        stemDirection = note.stemDirection;
-        break;
-      }
-    }
-    
-    double avgY = sumY / group.length;
-    final middleLineY = staffStartY + (staffSpacing * 2);
-    
-    // Determine stem direction - respect explicit direction or calculate based on position
-    bool stemUp;
-    if (forcedStemDirection) {
-      stemUp = stemDirection == 'up';
-    } else {
-      // Notes above the middle line have stems down, below have stems up
-      // If avgY < middleLineY, notes are above the middle line, so stem down (false)
-      // If avgY >= middleLineY, notes are below or on the middle line, so stem up (true)
-      stemUp = avgY >= middleLineY;
-    }
-    
-    // Calculate beam start and end coordinates
-    double actualStemLength = stemLength * 0.65;
-    
-    double startX, startY, endX, endY;
-    
-    // For quarter notes with stem down (p-shape), adjust stem X position
-    final firstIsQuarter = firstNoteObj.type == 'quarter';
-    final lastIsQuarter = lastNoteObj.type == 'quarter';
-    
-    if (stemUp) {
-      startX = firstNote['x'] + noteSize/9.0;
-      startY = firstNote['y'] - actualStemLength;
-      endX = lastNote['x'] + noteSize/9.0;
-      endY = lastNote['y'] - actualStemLength;
-    } else {
-      // For stems pointing down, adjust for quarter notes
-      startX = !stemUp && firstIsQuarter ? 
-               firstNote['x'] - noteSize/12.0 : // Quarter notes - adjusted to the right
-               firstNote['x'] - noteSize/1.0;  // Other notes
-      
-      startY = firstNote['y'] + actualStemLength;
-      
-      endX = !stemUp && lastIsQuarter ? 
-             lastNote['x'] - noteSize/12.0 : // Quarter notes - adjusted to the right
-             lastNote['x'] - noteSize/1.0;  // Other notes
-             
-      endY = lastNote['y'] + actualStemLength;
-    }
-    
-    // Adjust beam angle based on note spacing and pitch difference
-    final pitchDiff = lastNote['y'] - firstNote['y'];
-    final maxSlope = 0.2; // Maximum allowable slope
-    
-    // Slope calculation with limits
-    double slope = pitchDiff / (endX - startX);
-    slope = slope.clamp(-maxSlope, maxSlope);
-    
-    // Recalculate end Y to adjust slope
-    endY = startY + slope * (endX - startX);
-    
-    // Draw the beam
-    final beamPaint = Paint()
-      ..color = Colors.black
-      ..strokeWidth = lineWidth * 2.2 // Thicker for beam
-      ..style = PaintingStyle.fill
-      ..strokeCap = StrokeCap.butt;
-    
-    // Draw the main beam
-    final beamPath = Path();
-    final beamThickness = 3.5;
-    
-    if (stemUp) {
-      beamPath.moveTo(startX, startY);
-      beamPath.lineTo(startX, startY - beamThickness);
-      beamPath.lineTo(endX, endY - beamThickness);
-      beamPath.lineTo(endX, endY);
-    } else {
-      beamPath.moveTo(startX, startY);
-      beamPath.lineTo(startX, startY + beamThickness);
-      beamPath.lineTo(endX, endY + beamThickness);
-      beamPath.lineTo(endX, endY);
-    }
-    
-    beamPath.close();
-    canvas.drawPath(beamPath, beamPaint);
-    
-    // Draw second beam for 16th notes if needed
-    if (needsDoubleBeam) {
-      final secondBeamPath = Path();
-      final beamSpacing = 6.0; // Space between beams
-      
-      if (stemUp) {
-        secondBeamPath.moveTo(startX, startY - beamSpacing);
-        secondBeamPath.lineTo(startX, startY - beamSpacing - beamThickness);
-        secondBeamPath.lineTo(endX, endY - beamSpacing - beamThickness);
-        secondBeamPath.lineTo(endX, endY - beamSpacing);
-      } else {
-        secondBeamPath.moveTo(startX, startY + beamSpacing);
-        secondBeamPath.lineTo(startX, startY + beamSpacing + beamThickness);
-        secondBeamPath.lineTo(endX, endY + beamSpacing + beamThickness);
-        secondBeamPath.lineTo(endX, endY + beamSpacing);
-      }
-      
-      secondBeamPath.close();
-      canvas.drawPath(secondBeamPath, beamPaint);
-    }
-    
-    // Draw stems for each note
-    for (final idx in group) {
-      final notePos = notePositions[idx];
-      final noteX = notePos['x'];
-      final noteY = notePos['y'];
-      
-      final note = notePos['note'];
-      final isQuarterNote = note.type == 'quarter';
-      
-      // Calculate interpolated stem height based on position within the group
-      final progress = (noteX - startX) / (endX - startX);
-      final stemY = startY + progress * (endY - startY);
-      
-      final stemPaint = Paint()
-        ..color = Colors.black
-        ..strokeWidth = lineWidth * 1.4
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round;
-      
-      // Calculate stem X position consistent with _drawStem
-      double stemX;
-      if (!stemUp && isQuarterNote) {
-        // For quarter notes with stem down (p-shape)
-        stemX = noteX - noteSize/12.0; 
-      } else if (!stemUp && note.type == 'half') {
-        // For half notes with stem down - more to the right than eighth notes but less than quarters
-        stemX = noteX - noteSize/8.0;
-      } else if (stemUp) {
-        stemX = noteX + noteSize/9.0; // For stem up
-      } else {
-        stemX = noteX - noteSize/1.0; // For other notes with stem down
-      }
-      
-      if (stemUp) {
-        canvas.drawLine(
-          Offset(stemX, noteY - noteSize/9),
-          Offset(stemX, stemY),
-          stemPaint,
-        );
-      } else {
-        canvas.drawLine(
-          Offset(stemX, noteY + noteSize/9),
-          Offset(stemX, stemY),
-          stemPaint,
-        );
-      }
-    }
+    // For background painter, we don't need to implement full beam drawing
+    // Just return early since beams are part of static rendering
+    return;
   }
 
   // Returns true if the note's step is sharped/flatted in the key signature
@@ -1490,7 +1341,213 @@ class MusicSheetPainter extends CustomPainter {
     // TODO: Add flats support if needed
     return false;
   }
+}
+
+class MusicSheetOverlayPainter extends CustomPainter {
+  final Score score;
+  final double currentX;
+  final bool isPlaying;
+  final int currentNoteIndex;
+  final double currentTime;
+  final double bpm;
+  final bool isCorrect;
+  
+  // Standard music engraving measurements (shared constants)
+  static const double staffSpacing = 10.0;
+  static const double lineWidth = 1.2;
+  static const double noteSize = 24.0;
+  static const double stemLength = 40.0;
+  static const double measureWidth = 160.0;
+  static const double staffStartX = 80.0;
+  static const double staffStartY = 50.0;
+
+  MusicSheetOverlayPainter({
+    required this.score,
+    required this.currentX,
+    required this.isPlaying,
+    required this.currentNoteIndex,
+    required this.currentTime,
+    required this.bpm,
+    required this.isCorrect,
+  });
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  void paint(Canvas canvas, Size size) {
+    if (!isPlaying) return; // Only draw overlay when playing
+    
+    // Draw only the note highlighting overlay
+    _drawNoteHighlights(canvas, size);
+  }
+
+  void _drawNoteHighlights(Canvas canvas, Size size) {
+    final staffHeight = staffSpacing * 4;
+    final measureCount = score.measures.length;
+    final totalWidth = size.width - 180.0;
+    
+    // Calculate measure widths (same logic as background painter)
+    List<double> measureWidths = [];
+    
+    for (int m = 0; m < measureCount; m++) {
+      final measure = score.measures[m];
+      final noteCount = measure.notes.length;
+      double width = 160.0;
+      
+      if (noteCount >= 6) {
+        width += 40.0;
+      }
+      final eighthNotes = measure.notes.where((n) => 
+        n.type == 'eighth' || n.type == '16th'
+      ).length;
+      if (eighthNotes >= 4) {
+        width += eighthNotes * 5.0;
+      }
+      
+      width = width.clamp(160.0, 240.0);
+      measureWidths.add(width);
+    }
+    
+    final requestedTotalWidth = measureWidths.reduce((a, b) => a + b);
+    final scaleFactor = (totalWidth / requestedTotalWidth).clamp(0.85, 1.2);
+    for (int i = 0; i < measureWidths.length; i++) {
+      measureWidths[i] *= scaleFactor;
+    }
+    
+    double currentX = staffStartX + 80.0;
+
+    // Find and highlight the current note
+    for (int m = 0; m < measureCount; m++) {
+      final measure = score.measures[m];
+      final measureWidth = measureWidths[m];
+      
+      final noteCount = measure.notes.length;
+      double noteSpacing = measureWidth / (noteCount + 1);
+      
+      if (noteCount > 1) {
+        final longNotes = measure.notes.where((n) => 
+          n.type == 'whole' || 
+          n.type == 'half' || 
+          (n.type == 'quarter' && n.hasDot)
+        ).length;
+        final shortNotes = noteCount - longNotes;
+        
+        noteSpacing = ((measureWidth - 60) / (noteCount + 0.5)).clamp(30.0, 75.0);
+        
+        if (longNotes > 0) noteSpacing += 8.0;
+        if (shortNotes > 2) noteSpacing -= 4.0;
+        if (shortNotes > 4) noteSpacing -= 2.0;
+        
+        if (shortNotes == noteCount && noteCount >= 6) {
+          noteSpacing = (measureWidth - 50) / (noteCount + 0.5);
+        }
+      }
+
+      double noteX = currentX + 25.0;
+      
+      if (measure.notes.length >= 6) {
+        noteX = currentX + 20.0;
+      }
+      
+      for (int i = 0; i < measure.notes.length; i++) {
+        final note = measure.notes[i];
+        final noteY = _getNoteY(note, staffStartY);
+        
+        // Calculate if this is the current note
+        int totalNoteIndex = 0;
+        double totalBeats = 0.0;
+
+        // Calculate total beats up to this note
+        for (int prevM = 0; prevM < m; prevM++) {
+          final prevMeasure = score.measures[prevM];
+          for (final prevNote in prevMeasure.notes) {
+            totalBeats += _getNoteDuration(prevNote);
+          }
+        }
+
+        for (int prevI = 0; prevI < i; prevI++) {
+          totalBeats += _getNoteDuration(measure.notes[prevI]);
+        }
+
+        // Check if this is the current note
+        const double secondsPerMinute = 60.0;
+        final double beatDuration = secondsPerMinute / bpm;
+        final double currentBeats = currentTime / beatDuration;
+        
+        final bool isCurrentNote = currentBeats >= totalBeats && 
+                                 currentBeats < totalBeats + _getNoteDuration(note);
+
+        // Draw highlight if this is the current note and not a rest
+        if (isCurrentNote && !note.isRest) {
+          // Draw the highlight circle
+          final highlightPaint = Paint()
+            ..color = isCorrect ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
+            ..style = PaintingStyle.fill;
+          
+          canvas.drawCircle(
+            Offset(noteX, noteY),
+            noteSize * 0.8,
+            highlightPaint,
+          );
+
+          // Add a glow effect
+          final glowPaint = Paint()
+            ..color = isCorrect ? Colors.green.withOpacity(0.3) : Colors.red.withOpacity(0.3)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
+          
+          canvas.drawCircle(
+            Offset(noteX, noteY),
+            noteSize * 1.5,
+            glowPaint,
+          );
+        }
+        
+        noteX += noteSpacing;
+      }
+      
+      currentX += measureWidth;
+    }
+  }
+
+  double _getNoteY(Note note, double startY) {
+    final stepOrder = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    final middleC = startY + (staffSpacing * 5);
+    
+    int stepsFromMiddleC = 0;
+    int octaveDiff = note.octave - 4;
+    stepsFromMiddleC += octaveDiff * 7;
+    
+    int currentStepIndex = stepOrder.indexOf(note.step);
+    int middleCIndex = stepOrder.indexOf('C');
+    stepsFromMiddleC += currentStepIndex - middleCIndex;
+    
+    return middleC - (stepsFromMiddleC * staffSpacing / 2);
+  }
+
+  double _getNoteDuration(Note note) {
+    switch (note.type) {
+      case 'whole':
+        return 4.0;
+      case 'half':
+        return 2.0;
+      case 'quarter':
+        return 1.0;
+      case 'eighth':
+        return 0.5;
+      case '16th':
+        return 0.25;
+      default:
+        return 1.0;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    if (oldDelegate is! MusicSheetOverlayPainter) return true;
+    
+    // Only repaint when playback state changes
+    return oldDelegate.currentTime != this.currentTime ||
+           oldDelegate.isPlaying != this.isPlaying ||
+           oldDelegate.currentNoteIndex != this.currentNoteIndex ||
+           oldDelegate.isCorrect != this.isCorrect ||
+           oldDelegate.bpm != this.bpm;
+  }
 }

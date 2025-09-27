@@ -2,8 +2,15 @@ import 'package:flutter/material.dart';
 import 'main_navigation_screen.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -84,20 +91,38 @@ class HomeScreen extends StatelessWidget {
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF543310),
-                          foregroundColor: Color(0xFFF5F5DD),
+                          foregroundColor: const Color(0xFFF5F5DD),
                           elevation: 0,
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        label: const Text('Start Practice'),
-                        onPressed: () {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
-                          );
+                        icon: _isLoading 
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
+                                ),
+                              )
+                            : const Icon(Icons.play_arrow_rounded),
+                        label: Text(_isLoading ? 'Loading...' : 'Start Practice'),
+                        onPressed: _isLoading ? null : () async {
+                          setState(() {
+                            _isLoading = true;
+                          });
+                          
+                          // Add a small delay to show the loading animation
+                          await Future.delayed(const Duration(milliseconds: 800));
+                          
+                          if (mounted) {
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
+                            );
+                          }
                         },
                       ),
                     ),

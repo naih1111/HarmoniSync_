@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -34,7 +35,14 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   // For Android Emulator: 'http://10.0.2.2:5000'
   // For Physical Device: 'http://192.168.100.51:5000' (your computer's IP)
   // For Desktop/Web: 'http://localhost:5000'
-  static const String _serverUrl = 'http://192.168.1.6:5000';
+  // For Online Service: 'https://pdf-to-musicxml-converter.onrender.com'
+  
+  // Available server options:
+   static const String _localServerUrl = 'http://192.168.1.8:5000'; // Keep offline option
+  static const String _onlineServerUrl = 'https://pdf-to-musicxml-converter.onrender.com';
+  
+  // Current active server URL - switch between _localServerUrl and _onlineServerUrl
+  static const String _serverUrl = _onlineServerUrl;
   bool _isConverting = false; // Track conversion status
   bool _isPickingFile = false; // Track file picking status
   bool _isOpeningFile = false; // Track file opening status
@@ -45,6 +53,11 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   
   // Temp buffer (not shown anymore)
   final Map<String, String> _conversionResults = {};
+
+  // Server status
+  bool _serverOnline = false;
+  String? _serverStatusMessage;
+  Timer? _serverStatusTimer;
 
   // Loader animation
   late final AnimationController _loaderController;
@@ -57,11 +70,17 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       duration: const Duration(milliseconds: 1200),
     )..repeat();
     _loadConvertedItems(); // Add this line
+    // Initial server status check and periodic updates
+    _checkServerStatus();
+    _serverStatusTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      _checkServerStatus();
+    });
   }
 
   @override
   void dispose() {
     _loaderController.dispose();
+    _serverStatusTimer?.cancel();
     super.dispose();
   }
 
@@ -495,31 +514,12 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       });
 
       // First, test server connection
-      try {
-        final healthResponse = await http.get(
-          Uri.parse('$_serverUrl/health'),
-          headers: {'Content-Type': 'application/json'},
-        ).timeout(const Duration(seconds: 10));
-        
-        if (healthResponse.statusCode != 200) {
-          throw Exception('Server health check failed with status: ${healthResponse.statusCode}');
-        }
-      } catch (e) {
+      bool ok = await _ensureServerAvailableWithRetry();
+      if (!ok) {
         setState(() {
-          _conversionError = 'Cannot connect to server: $e';
           _isConverting = false;
           _currentConvertingName = null;
         });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Server connection failed: $e\nPlease check if the server is running at $_serverUrl'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 5),
-            ),
-          );
-        }
         return;
       }
 
@@ -534,9 +534,16 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
         filename: p.basename(pdfFile.path),
       ));
 
+      print('DEBUG: Sending request to: $uri');
+      print('DEBUG: File size: ${await pdfFile.length()} bytes');
+      print('DEBUG: File name: ${p.basename(pdfFile.path)}');
+
       // Set timeout for the request
       final streamedResponse = await request.send().timeout(const Duration(minutes: 5));
       final response = await http.Response.fromStream(streamedResponse);
+
+      print('DEBUG: Response status: ${response.statusCode}');
+      print('DEBUG: Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         try {
@@ -652,6 +659,52 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
     
     // Save the updated list
     await _saveConvertedItems();
+  }
+
+  /// Ensure server is available with a longer timeout and one retry (helps with cold starts)
+  Future<bool> _ensureServerAvailableWithRetry() async {
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final resp = await http
+            .get(
+              Uri.parse('$_serverUrl/health'),
+              headers: {'Content-Type': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 25));
+        if (resp.statusCode == 200) {
+          if (!_serverOnline) {
+            setState(() {
+              _serverOnline = true;
+              _serverStatusMessage = 'Online';
+            });
+          }
+          return true;
+        }
+        // Non-200 response
+        throw Exception('Server health check failed: ${resp.statusCode}');
+      } catch (e) {
+        if (attempt == 2) {
+          setState(() {
+            _serverOnline = false;
+            _serverStatusMessage = 'Offline';
+            _conversionError = 'Cannot connect to server: $e';
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Server connection failed: $e\nPlease check if the server is running at $_serverUrl'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 6),
+              ),
+            );
+          }
+          return false;
+        }
+        // Small delay before retry
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+    return false;
   }
 
   /// Convert all PDF files in the list (placeholder for future multi-select)
@@ -1280,44 +1333,54 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
 
   /// Test connection to the Flask server
   Future<void> _testServerConnection() async {
+    await _checkServerStatus(showSnack: true);
+  }
+
+  /// Check server status (used on init and periodic). Optionally show snack.
+  Future<void> _checkServerStatus({bool showSnack = false}) async {
     try {
-      final response = await http.get(
-        Uri.parse('$_serverUrl/health'),
-        headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
-      
-      if (response.statusCode == 200) {
+      final response = await http
+          .get(
+            Uri.parse('$_serverUrl/health'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 25));
+      final online = response.statusCode == 200;
+      setState(() {
+        _serverOnline = online;
+        _serverStatusMessage = online ? 'Online' : 'Offline';
+      });
+      if (showSnack && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Server connection successful!\nServer URL: $_serverUrl'),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Server responded with status: ${response.statusCode}\nResponse: ${response.body}'),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 5),
+            content: Text(online
+                ? 'Server is online.'
+                : 'Server responded with status: ${response.statusCode}\nResponse: ${response.body}'),
+            backgroundColor: online ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 4),
           ),
         );
       }
     } catch (e) {
-      String errorMsg = 'Cannot connect to server: $e';
-      if (e.toString().contains('TimeoutException')) {
-        errorMsg = 'Connection timed out. Please check if the server is running at $_serverUrl';
-      } else if (e.toString().contains('SocketException')) {
-        errorMsg = 'Network error. Please check your connection and server URL: $_serverUrl';
+      setState(() {
+        _serverOnline = false;
+        _serverStatusMessage = 'Offline';
+      });
+      if (showSnack && mounted) {
+        String errorMsg = 'Cannot connect to server: $e';
+        if (e.toString().contains('TimeoutException')) {
+          errorMsg = 'Connection timed out. Please check if the server is running at $_serverUrl';
+        } else if (e.toString().contains('SocketException')) {
+          errorMsg = 'Network error. Please check your connection and server URL: $_serverUrl';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
       }
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMsg),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
-      );
     }
   }
 
@@ -1330,6 +1393,33 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
         foregroundColor: Color(0xFFF5F5DD),
         title: const Text('Sheet Converter'),
         centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _serverOnline ? Colors.green : Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _serverOnline ? 'Online' : 'Offline',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                IconButton(
+                  tooltip: 'Test Server',
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  onPressed: _testServerConnection,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
       floatingActionButton: _convertedItems.isNotEmpty
           ? FloatingActionButton.extended(

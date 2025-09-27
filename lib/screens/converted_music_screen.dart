@@ -1,15 +1,27 @@
-import 'dart:async';
-import 'dart:io';
-import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'dart:async';
+import 'dart:io';
 import '../services/music_service.dart';
+import '../services/pitch_detection_service.dart';
+import '../services/metronome_service.dart';
 import '../widgets/music_sheet.dart';
+import '../widgets/exercise_controls.dart';
+import '../widgets/note_progress_row.dart';
+import '../widgets/exercise_settings_dialog.dart';
+import '../widgets/debug_panel.dart';
 import '../database/database_helper.dart';
+
+// ============================================================================
+// CONVERTED MUSIC SCREEN - Main screen for practicing with converted PDF files
+// ============================================================================
+// This screen handles:
+// - Loading and displaying music scores from converted PDF files
+// - Playing exercises with adjustable BPM
+// - Real-time pitch detection using microphone
+// - Metronome functionality
+// - Exercise controls (play, pause, replay)
+// - Score tracking and progress saving
 
 class ConvertedMusicScreen extends StatefulWidget {
   final String filePath;
@@ -25,455 +37,201 @@ class ConvertedMusicScreen extends StatefulWidget {
   State<ConvertedMusicScreen> createState() => _ConvertedMusicScreenState();
 }
 
-class _ConvertedMusicScreenState extends State<ConvertedMusicScreen>
-    with TickerProviderStateMixin {
+class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with SingleTickerProviderStateMixin {
   // ============================================================================
-  // SESSION DATA LOADING
+  // STATE VARIABLES - Track the current state of the exercise
   // ============================================================================
-  bool _isLoading = true;
-  String? _error;
-  Future<Score>? _scoreFuture;
-
-  // ============================================================================
-  // PLAYBACK CONTROL
-  // ============================================================================
-  bool _isPlaying = false;
-  bool _isPaused = false;
-  double _currentTime = 0.0;
-  Timer? _playbackTimer;
-  Stopwatch? _playbackStopwatch;
-  double _elapsedBeforePauseSec = 0.0;
-
-  // ============================================================================
-  // COUNTDOWN & TIMING
-  // ============================================================================
-  bool _showCountdown = false;
-  int _countdown = 3;
-  Timer? _countdownTimer;
-  bool _isCountingIn = false;
-
-  // ============================================================================
-  // NOTE TRACKING
-  // ============================================================================
-  int _currentNoteIndex = 0;
-  String? _expectedNote;
-  String? _currentDetectedNote;
-  bool _isCorrect = false;
-  bool _reachedEnd = false;
-  double _lastMeasurePosition = 0.0;
-  double _totalDuration = 0.0;
-
-  // ============================================================================
-  // SCORE & PROGRESS TRACKING
-  // ============================================================================
-  int _correctNotesCount = 0;
-  int _totalPlayableNotes = 0;
-  Map<int, bool> _noteCorrectness = {};
-
-  // ============================================================================
-  // ANIMATIONS & VISUAL EFFECTS
-  // ============================================================================
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
-  late AnimationController _glowController;
-  late Animation<Color?> _glowColorAnimation;
-
-  // ============================================================================
-  // AUDIO RECORDING & PITCH DETECTION
-  // ============================================================================
-  FlutterSoundRecorder? _recorder;
-  bool _isRecorderInitialized = false;
-  StreamSubscription<RecordingDisposition>? _recordingDataSubscription;
-  StreamController<Uint8List>? _audioStreamController;
-  double _pitchConfidence = 0.0;
-  bool _isVoiceDetected = false;
-  String _debugInfo = '';
-
-  // ============================================================================
-  // METRONOME SYSTEM
-  // ============================================================================
-  FlutterSoundPlayer? _metronomePlayer;
-  Timer? _metronomeTimer;
-  bool _metronomeEnabled = false;
-  bool _metronomeFlash = false;
-  int _lastWholeBeat = -1;
-  int _lastClickStartUs = 0;
-  static const int _clickDurationMs = 100;
-
-  // ============================================================================
-  // COUNTING SYSTEM
-  // ============================================================================
-  int _bpm = 120;
-
-  // ============================================================================
-  // EXERCISE SETTINGS
-  // ============================================================================
-  bool _adaptiveDetection = true;
-  double _detectionSensitivity = 0.7;
-  double _confidenceThreshold = 0.6;
-
-  // ============================================================================
-  // PRECISE TIMING HELPERS
-  // ============================================================================
-  List<double> _notePositions = [];
-  List<String> _noteNames = [];
+ 
+  // Exercise Data & Loading
+  late Future<Score> _scoreFuture;        // Holds the music score data
+  bool _isLoading = true;                 // Shows loading spinner while score loads
+  String? _error;                         // Stores any error messages
+ 
+  // Playback Control States
+  bool _isPlaying = false;                // True when exercise is actively playing
+  bool _isPaused = false;                 // True when exercise is paused
+  bool _reachedEnd = false;               // True when exercise has finished
+ 
+  // Countdown & Timing
+  int _countdown = 3;                     // Countdown number (3, 2, 1, 0)
+  bool _showCountdown = false;            // Whether to show countdown overlay
+  Timer? _countdownTimer;                 // Timer for countdown animation
+  Timer? _playbackTimer;                  // Main timer for exercise playback
+  double _currentTime = 0.0;              // Current position in exercise (seconds)
+  final double _totalDuration = 0.0;      // Total length of exercise (seconds)
+  double _lastMeasurePosition = 1;        // End position of last measure - will be calculated
+ 
+  // Note Tracking
+  int _currentNoteIndex = 0;              // Index of current note being played
+  String? _expectedNote;                  // The note that should be sung/played
+  String? _currentDetectedNote;           // The note detected from microphone
+  bool _isCorrect = false;                // Whether detected note matches expected
+ 
+  // Score & Progress Tracking
+  int _totalPlayableNotes = 0;            // Total number of notes (excluding rests)
+  int _correctNotesCount = 0;             // Number of correctly played notes
+  final Map<int, bool> _noteCorrectness = {}; // Tracks correctness of each note
+ 
+  // Animation & Visual Effects
+  late AnimationController _pulseController;      // Controls note highlighting animation
+  late Animation<double> _pulseAnimation;         // Scale animation for current note
+  late Animation<Color?> _glowColorAnimation;     // Color animation for feedback
+ 
+  // Services
+  late PitchDetectionService _pitchDetectionService;
+  late MetronomeService _metronomeService;
+ 
+  // Exercise Settings
+  double _bpm = 120.0;                            // Beats per minute (exercise speed)
+  bool _isMaleSinger = true;                      // Singer gender setting
+ 
+  // Precise timing helpers
+  Stopwatch? _playbackStopwatch;                  // High-precision stopwatch for playback
+  double _elapsedBeforePauseSec = 0.0;            // Accumulated time before a pause
+ 
+  // UI Controllers
+  final ScrollController _noteScrollController = ScrollController(); // Scrolls note list
+ 
+  // Cache for note positions to avoid recalculating every frame
+  final List<double> _notePositions = [];
+  final List<String> _noteNames = [];
   bool _needsNoteListRebuild = true;
-  ScrollController _noteScrollController = ScrollController();
 
-  // ============================================================================
-  // UI CONTROLLERS
-  // ============================================================================
-  bool _showDebugPanel = false;
-
-  // ============================================================================
-  // ENHANCED PITCH DETECTION
-  // ============================================================================
-  List<double> _pitchHistory = [];
-  List<double> _confidenceHistory = [];
-  static const int _historyLength = 10;
-  double _smoothedPitch = 0.0;
-  double _smoothedConfidence = 0.0;
-
-  // ============================================================================
-  // DEBUG & VISUAL FEEDBACK
-  // ============================================================================
+  // Debug and visual feedback
+  String _debugInfo = '';
+  double _pitchConfidence = 0.0;
+  final bool _isVoiceDetected = false;
   Map<String, dynamic> _componentStats = {};
-  bool _showComponentStats = false;
-
-  // ============================================================================
-  // DEBUG CONTROLS
-  // ============================================================================
-  bool _testWienerFilter = false;
-  bool _testVoiceActivityDetector = false;
-  bool _testPitchSmoother = false;
-
-  // ============================================================================
-  // NEW STATE VARIABLES
-  // ============================================================================
-  String _singerGender = 'mixed'; // 'male', 'female', 'mixed'
-  bool _isMaleSinger = false; // For switch toggle compatibility
+  final bool _showDebugPanel = false;
+  
+  // Time signature tracking
+  int? _timeSigBeats;
+  int? _timeSigBeatType;
+  
+  // Metronome state
+  bool _metronomeEnabled = false;
+  final bool _metronomeFlash = false;
+  int _lastWholeBeat = -1;
+  
+  // Note duration for adaptive detection
+  double _currentNoteDuration = 1.0;
 
   @override
   void initState() {
     super.initState();
-    
+   
     // Force landscape orientation for better music sheet viewing
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-
-    // Load the music score from file
+   
+    // Load the music score from the converted file
     _loadScore();
-
-    // Initialize animations for visual feedback
+   
+    // Initialize animation controller
     _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 1500),
       vsync: this,
-    );
+    )..repeat(reverse: true);
+   
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _glowController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
     _glowColorAnimation = ColorTween(
       begin: Colors.transparent,
-      end: Colors.green.withOpacity(0.3),
-    ).animate(_glowController);
+      end: Colors.green.withValues(alpha: 0.5),
+    ).animate(_pulseController);
 
-    // Initialize audio systems
-    _initializeRecorder();
-    _initializeMetronomePlayer();
-    _unlockWebAudioIfNeeded();
+    // Initialize services
+    _initializeServices();
+   
+    // Ensure BPM is within valid range
+    _bpm = _bpm.clamp(40.0, 244.0);
   }
 
-  // ============================================================================
-  // AUDIO SYSTEM INITIALIZATION
-  // ============================================================================
-
-  /// Initialize the audio recorder for pitch detection
-  Future<void> _initializeRecorder() async {
-    try {
-      // Request microphone permission
-      final status = await Permission.microphone.request();
-      if (status != PermissionStatus.granted) {
-        setState(() {
-          _error = 'Microphone permission is required for pitch detection';
-        });
-        return;
-      }
-
-      // Initialize the recorder
-      _recorder = FlutterSoundRecorder();
-      await _recorder!.openRecorder();
-      _isRecorderInitialized = true;
-    } catch (e) {
-      setState(() {
-        _error = 'Failed to initialize audio recorder: $e';
-      });
-    }
-  }
-
-  /// Initialize the metronome audio player
-  Future<void> _initializeMetronomePlayer() async {
-    try {
-      _metronomePlayer = FlutterSoundPlayer();
-      await _metronomePlayer!.openPlayer();
-    } catch (e) {
-      print('Failed to initialize metronome player: $e');
-    }
-  }
-
-  /// Unlock Web Audio context if needed (for web platform)
-  void _unlockWebAudioIfNeeded() {
-    // This is a placeholder for web audio context unlocking
-    // In a real implementation, you might need platform-specific code
-  }
-
-  // ============================================================================
-  // ADAPTIVE DETECTION SYSTEM
-  // ============================================================================
-
-  /// Calculate adaptive detection parameters based on user performance
-  void _calculateAdaptiveDetection() {
-    if (!_adaptiveDetection) return;
-
-    // Analyze recent performance to adjust detection sensitivity
-    final recentCorrectness = _noteCorrectness.values
-        .where((correct) => correct != null)
-        .map((correct) => correct! ? 1.0 : 0.0)
-        .toList();
-
-    if (recentCorrectness.length >= 5) {
-      final accuracy = recentCorrectness.reduce((a, b) => a + b) / recentCorrectness.length;
-      
-      // Adjust sensitivity based on accuracy
-      if (accuracy > 0.8) {
-        // High accuracy - can be more strict
-        _detectionSensitivity = math.min(0.9, _detectionSensitivity + 0.05);
-        _confidenceThreshold = math.min(0.8, _confidenceThreshold + 0.05);
-      } else if (accuracy < 0.5) {
-        // Low accuracy - be more lenient
-        _detectionSensitivity = math.max(0.5, _detectionSensitivity - 0.05);
-        _confidenceThreshold = math.max(0.4, _confidenceThreshold - 0.05);
-      }
-    }
-  }
-
-  // ============================================================================
-  // PITCH DETECTION SYSTEM
-  // ============================================================================
-
-  /// Start continuous pitch detection during exercise playback
-  void _startPitchDetection() async {
-    if (!_isRecorderInitialized || _recorder == null) return;
-
-    try {
-      // Create a stream to receive audio data from microphone
-      _audioStreamController = StreamController<Uint8List>();
-      
-      // Start recording with specific parameters for pitch detection
-      await _recorder!.startRecorder(
-        toStream: _audioStreamController!.sink,
-        codec: Codec.pcm16,
-        numChannels: 1,
-        sampleRate: 44100,
-      );
-
-      // Subscribe to audio data stream for real-time pitch analysis
-      _recordingDataSubscription = _recorder!.onProgress!.listen((data) {
-        if (data.decibels != null && data.decibels! > -40) {
-          _updatePitchDetection(data);
-        }
-      });
-    } catch (e) {
-      print('Failed to start pitch detection: $e');
-    }
-  }
-
-  /// Process audio data and update pitch detection results
-  void _updatePitchDetection(RecordingDisposition data) {
-    // This is a simplified pitch detection implementation
-    // In a real app, you would use more sophisticated algorithms like FFT, autocorrelation, etc.
+  /// Initialize pitch detection and metronome services
+  Future<void> _initializeServices() async {
+    _pitchDetectionService = PitchDetectionService();
+    _metronomeService = MetronomeService();
     
-    if (data.decibels == null) return;
-
-    // Simulate pitch detection (replace with actual implementation)
-    final double volume = data.decibels!;
-    _isVoiceDetected = volume > -30; // Voice activity detection threshold
-
-    if (_isVoiceDetected && _expectedNote != null) {
-      // Simulate pitch detection confidence
-      _pitchConfidence = math.max(0.0, (volume + 40) / 40);
-      
-      // Add to history for smoothing
-      _pitchHistory.add(_pitchConfidence);
-      _confidenceHistory.add(_pitchConfidence);
-      
-      if (_pitchHistory.length > _historyLength) {
-        _pitchHistory.removeAt(0);
-        _confidenceHistory.removeAt(0);
-      }
-      
-      // Calculate smoothed values
-      _smoothedPitch = _pitchHistory.reduce((a, b) => a + b) / _pitchHistory.length;
-      _smoothedConfidence = _confidenceHistory.reduce((a, b) => a + b) / _confidenceHistory.length;
-      
-      // Simulate note detection (in real implementation, convert frequency to note)
-      if (_smoothedConfidence > _confidenceThreshold) {
-        _currentDetectedNote = _expectedNote; // Simplified - assume correct for demo
-        _isCorrect = true;
-        
-        // Update note correctness tracking
-        _noteCorrectness[_currentNoteIndex] = true;
-        _correctNotesCount++;
-        
-        // Trigger visual feedback
-        _pulseController.forward().then((_) => _pulseController.reverse());
-        _glowController.forward().then((_) => _glowController.reverse());
-      } else {
-        _isCorrect = false;
-        _noteCorrectness[_currentNoteIndex] = false;
-      }
-      
-      // Update adaptive detection parameters
-      _calculateAdaptiveDetection();
-    } else {
-      _isCorrect = false;
-      _pitchConfidence = 0.0;
-    }
-
-    // Update debug information
-    _updateDebugInfo();
-    
-    // Perform component tests if enabled
-    if (_testWienerFilter || _testVoiceActivityDetector || _testPitchSmoother) {
-      _performComponentTests(data);
-    }
-
-    if (mounted) setState(() {});
-  }
-
-  /// Perform isolated component tests for debugging
-  void _performComponentTests(RecordingDisposition data) {
-    if (_testWienerFilter) {
-      _testWienerFilterIsolated(data);
-    }
-    if (_testVoiceActivityDetector) {
-      _testVADIsolated(data);
-    }
-    if (_testPitchSmoother) {
-      // Test pitch smoothing algorithm
-      final smoothingFactor = 0.3;
-      final rawPitch = data.decibels ?? 0.0;
-      _smoothedPitch = _smoothedPitch * (1 - smoothingFactor) + rawPitch * smoothingFactor;
-      _componentStats['pitch_smoother'] = {
-        'raw_pitch': rawPitch,
-        'smoothed_pitch': _smoothedPitch,
-        'smoothing_factor': smoothingFactor,
-      };
-    }
-  }
-
-  /// Test Wiener filter in isolation
-  void _testWienerFilterIsolated(RecordingDisposition data) {
-    // Simulate Wiener filter noise reduction
-    final noisePower = 0.1;
-    final signalPower = (data.decibels ?? 0.0) / 100.0;
-    final wienerGain = signalPower / (signalPower + noisePower);
-    final filteredSignal = (data.decibels ?? 0.0) * wienerGain;
-    
-    _componentStats['wiener_filter'] = {
-      'input_signal': data.decibels ?? 0.0,
-      'noise_power': noisePower,
-      'signal_power': signalPower,
-      'wiener_gain': wienerGain,
-      'filtered_signal': filteredSignal,
-    };
-  }
-
-  /// Test Voice Activity Detector in isolation
-  void _testVADIsolated(RecordingDisposition data) {
-    final threshold = -30.0;
-    final volume = data.decibels ?? -100.0;
-    final isVoiceActive = volume > threshold;
-    final confidence = math.max(0.0, (volume - threshold) / (0 - threshold));
-    
-    _componentStats['vad'] = {
-      'volume': volume,
-      'threshold': threshold,
-      'is_voice_active': isVoiceActive,
-      'confidence': confidence,
-    };
-  }
-
-  /// Update debug information display
-  void _updateDebugInfo() {
-    _debugInfo = '''
-Voice: ${_isVoiceDetected ? 'Detected' : 'Silent'}
-Expected: ${_expectedNote ?? 'None'}
-Detected: ${_currentDetectedNote ?? 'None'}
-Confidence: ${(_pitchConfidence * 100).toStringAsFixed(1)}%
-Smoothed: ${(_smoothedConfidence * 100).toStringAsFixed(1)}%
-Correct: ${_isCorrect ? 'Yes' : 'No'}
-Sensitivity: ${(_detectionSensitivity * 100).toStringAsFixed(0)}%
-Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
-''';
-  }
-
-  /// Get performance metrics for display
-  double _getProcessingLoad() {
-    // Simulate processing load calculation
-    return math.min(1.0, (_pitchHistory.length / _historyLength) * 0.8 + 0.2);
-  }
-
-  double _getMemoryUsage() {
-    // Simulate memory usage calculation
-    return math.min(1.0, (_componentStats.length / 10.0) * 0.6 + 0.3);
-  }
-
-  double _getSystemHealth() {
-    final load = _getProcessingLoad();
-    final memory = _getMemoryUsage();
-    return 1.0 - ((load + memory) / 2.0);
-  }
-
-  Color _getHealthColor() {
-    final health = _getSystemHealth();
-    if (health > 0.7) return Colors.green;
-    if (health > 0.4) return Colors.orange;
-    return Colors.red;
-  }
-
-  /// Stop pitch detection and clean up resources
-  void _stopPitchDetection() async {
     try {
-      _recordingDataSubscription?.cancel();
-      _recordingDataSubscription = null;
+      await _pitchDetectionService.initialize();
+      await _metronomeService.initialize();
       
-      if (_recorder != null && _recorder!.isRecording) {
-        await _recorder!.stopRecorder();
-      }
+      // Set up callbacks
+      _pitchDetectionService.onNoteDetected = _onNoteDetected;
+      _pitchDetectionService.onDebugUpdate = _onDebugUpdate;
+      _pitchDetectionService.onStatsUpdate = _onStatsUpdate;
+      _metronomeService.onFlashUpdate = _onMetronomeFlash;
+      
     } catch (e) {
-      print('Error stopping pitch detection: $e');
-    }
+        debugPrint('Error initializing services: $e');
+      }
   }
 
-  // ============================================================================
-  // SCORE LOADING
-  // ============================================================================
-
-  /// Load the music score from the uploaded file
-  void _loadScore() async {
+  /// Handle note detection from pitch detection service
+  void _onNoteDetected(String note, double confidence, bool isCorrect) {
+    if (!mounted) return;
+    
     setState(() {
-      _isLoading = true;
-      _error = null;
+      _currentDetectedNote = note;
+      _pitchConfidence = confidence;
+      _isCorrect = isCorrect;
+      
+      if (isCorrect) {
+        final bool? previous = _noteCorrectness[_currentNoteIndex];
+        _noteCorrectness[_currentNoteIndex] = true;
+        if (previous != true) {
+          _correctNotesCount++;
+        }
+      }
     });
+  }
 
+  /// Handle debug information updates
+  void _onDebugUpdate(String debugInfo) {
+    _debugInfo = debugInfo;
+  }
+
+  /// Handle statistics updates
+  void _onStatsUpdate(Map<String, dynamic> stats) {
+    _componentStats = stats;
+  }
+
+  /// Handle metronome flash updates
+  void _onMetronomeFlash(bool isFlashing) {
+    if (mounted) {
+      setState(() {
+        // Flash state is handled by the metronome service
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    _playbackTimer?.cancel();
+    _pulseController.dispose();
+    _noteScrollController.dispose();
+    _pitchDetectionService.dispose();
+    _metronomeService.dispose();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    super.dispose();
+  }
+
+  Future<void> _loadScore() async {
     try {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+
       // Check if file exists
       final file = File(widget.filePath);
       if (!await file.exists()) {
@@ -487,17 +245,13 @@ Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
       setState(() {
         _scoreFuture = Future.value(score);
         _isLoading = false;
-        
-        // Set BPM to default value (score doesn't contain BPM information)
-        // BPM is managed separately and can be adjusted by user
-        
-        // Count total playable notes for scoring
+        _timeSigBeats = score.beats;
+        _timeSigBeatType = score.beatType;
+        // Count playable (non-rest) notes for scoring
         _totalPlayableNotes = 0;
-        for (final measure in score.measures) {
-          for (final note in measure.notes) {
-            if (!note.isRest) {
-              _totalPlayableNotes++;
-            }
+        for (final m in score.measures) {
+          for (final n in m.notes) {
+            if (!n.isRest) _totalPlayableNotes++;
           }
         }
       });
@@ -510,1252 +264,293 @@ Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
   }
 
   // ============================================================================
-  // EXERCISE CONTROL
+  // EXERCISE CONTROL - Start, pause, resume, and stop the exercise
   // ============================================================================
-
-  /// Start the countdown before beginning the exercise
+ 
+  /// Show a 3-2-1 countdown before starting the exercise
   void _startCountdown() {
+    // Cancel any existing timers to avoid conflicts
+    _playbackTimer?.cancel();
+    _countdownTimer?.cancel();
+   
+    // Reset exercise state and show countdown overlay
     setState(() {
-      _showCountdown = true;
-      _countdown = 3;
-      _isCountingIn = true;
+      _countdown = 3;                    // Start countdown at 3
+      _isPlaying = false;                // Not playing yet
+      _isPaused = false;                 // Not paused
+      _currentTime = 0.0;                // Reset to beginning
+      _showCountdown = true;             // Show countdown overlay
     });
 
+    // Create countdown timer that counts down every second
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
-        _countdown--;
+        if (_countdown > 1) {
+          _countdown--;                   // Count down: 3, 2, 1
+        } else {
+          _countdown = 0;                 // Countdown finished
+          _showCountdown = false;         // Hide countdown overlay
+          _countdownTimer?.cancel();      // Stop countdown timer
+          _startExercise();               // Begin the actual exercise
+        }
       });
-
-      if (_countdown <= 0) {
-        timer.cancel();
-        setState(() {
-          _showCountdown = false;
-          _isCountingIn = false;
-        });
-        _startExercise();
-      }
     });
   }
 
-  /// Show settings dialog for exercise configuration
+  // ============================================================================
+  // SETTINGS DIALOG - Allow user to adjust exercise speed (BPM)
+  // ============================================================================
+ 
+  /// Show a dialog for adjusting the exercise speed (beats per minute)
   void _showSettingsDialog() {
-    // Use temporary variable so changes only apply when user confirms
-    double tempBpm = _bpm.toDouble();
-    bool tempIsMaleSinger = _isMaleSinger;
-    
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return SingleChildScrollView(
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: AlertDialog(
-                backgroundColor: const Color(0xFF232B39), // Dark blue background
-                title: const Text(
-                  'Exercise Settings',
-                  style: TextStyle(color: Color(0xFFF5F5DD)),
-                ),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // BPM Settings Section
-                    const Text(
-                      'Note Speed (BPM)',
-                      style: TextStyle(
-                        color: Color(0xFFF5F5DD),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.remove_circle_outline, color: Color(0xFFF5F5DD)),
-                          onPressed: () {
-                            if (tempBpm > 40) {
-                              tempBpm = (tempBpm - 1).clamp(40.0, 244.0);
-                              setDialogState(() {}); // Update dialog state
-                              if (mounted) {
-                                setState(() {
-                                  _bpm = tempBpm.round();
-                                });
-                              }
-                            }
-                          },
-                        ),
-                        const SizedBox(width: 16),
-                        Text(
-                          '${tempBpm.round()} BPM',
-                          style: const TextStyle(
-                            color: Color(0xFFF5F5DD),
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        IconButton(
-                          icon: const Icon(Icons.add_circle_outline, color: Color(0xFFF5F5DD)),
-                          onPressed: () {
-                            if (tempBpm < 244) {
-                              tempBpm = (tempBpm + 1).clamp(40.0, 244.0);
-                              setDialogState(() {}); // Update dialog state
-                              if (mounted) {
-                                setState(() {
-                                  _bpm = tempBpm.round();
-                                });
-                              }
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    SliderTheme(
-                      data: SliderThemeData(
-                        activeTrackColor: Colors.blue,
-                        inactiveTrackColor: Colors.blue.withOpacity(0.2),
-                        thumbColor: Color(0xFFF5F5DD),
-                        overlayColor: Colors.blue.withOpacity(0.2),
-                        valueIndicatorColor: Colors.blue,
-                        valueIndicatorTextStyle: const TextStyle(color: Color(0xFFF5F5DD)),
-                        trackHeight: 4.0,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 12.0,
-                          elevation: 4.0,
-                        ),
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 24.0,
-                        ),
-                      ),
-                      child: Slider(
-                        value: tempBpm,
-                        min: 40,
-                        max: 244,
-                        divisions: 204,
-                        label: '${tempBpm.round()} BPM',
-                        onChanged: (value) {
-                          tempBpm = value;
-                          setDialogState(() {}); // Update dialog state
-                          if (mounted) {
-                            setState(() {
-                              _bpm = value.round();
-                            });
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '40 BPM',
-                          style: TextStyle(
-                            color: Color(0xFFF5F5DD).withOpacity(0.54),
-                            fontSize: 12,
-                          ),
-                        ),
-                        Text(
-                          '244 BPM',
-                          style: TextStyle(
-                            color: Color(0xFFF5F5DD).withOpacity(0.54),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Higher BPM = Faster Note Changes',
-                      style: TextStyle(
-                        color: Color(0xFFF5F5DD).withOpacity(0.54),
-                        fontSize: 12,
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Singer Gender Settings Section
-                    const Text(
-                      'Singer Gender',
-                      style: TextStyle(
-                        color: Color(0xFFF5F5DD),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                tempIsMaleSinger ? Icons.male : Icons.female,
-                                color: tempIsMaleSinger ? Colors.blue : Colors.pink,
-                                size: 28,
-                              ),
-                              const SizedBox(width: 16),
-                              Text(
-                                tempIsMaleSinger ? 'Male Singer' : 'Female Singer',
-                                style: TextStyle(
-                                  color: Color(0xFFF5F5DD),
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Switch(
-                            value: tempIsMaleSinger,
-                            onChanged: (value) {
-                              tempIsMaleSinger = value;
-                              setDialogState(() {});
-                            },
-                            activeColor: Colors.blue,
-                            inactiveThumbColor: Colors.pink,
-                            inactiveTrackColor: Colors.pink.withOpacity(0.3),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      tempIsMaleSinger 
-                        ? 'Optimized for male vocal range (80-400 Hz)'
-                        : 'Optimized for female vocal range (150-800 Hz)',
-                      style: TextStyle(
-                        color: Color(0xFFF5F5DD).withOpacity(0.7),
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Debug Controls Section
-                    const Text(
-                      'Debug Controls',
-                      style: TextStyle(
-                        color: Color(0xFFF5F5DD),
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          SwitchListTile(
-                            title: const Text('Show Debug Panel', style: TextStyle(color: Color(0xFFF5F5DD))),
-                            value: _showDebugPanel,
-                            onChanged: (value) {
-                              setDialogState(() {
-                                _showDebugPanel = value;
-                              });
-                            },
-                            activeColor: Colors.blue,
-                          ),
-                          SwitchListTile(
-                            title: const Text('Test Wiener Filter', style: TextStyle(color: Color(0xFFF5F5DD))),
-                            subtitle: const Text('Isolate noise reduction', style: TextStyle(color: Color(0xFFF5F5DD), fontSize: 12)),
-                            value: _testWienerFilter,
-                            onChanged: (value) {
-                              setDialogState(() {
-                                _testWienerFilter = value;
-                              });
-                            },
-                            activeColor: Colors.green,
-                          ),
-                          SwitchListTile(
-                            title: const Text('Test Voice Activity Detector', style: TextStyle(color: Color(0xFFF5F5DD))),
-                            subtitle: const Text('Isolate voice detection', style: TextStyle(color: Color(0xFFF5F5DD), fontSize: 12)),
-                            value: _testVoiceActivityDetector,
-                            onChanged: (value) {
-                              setDialogState(() {
-                                _testVoiceActivityDetector = value;
-                              });
-                            },
-                            activeColor: Colors.orange,
-                          ),
-                          SwitchListTile(
-                            title: const Text('Test Pitch Smoother', style: TextStyle(color: Color(0xFFF5F5DD))),
-                            subtitle: const Text('Isolate pitch smoothing', style: TextStyle(color: Color(0xFFF5F5DD), fontSize: 12)),
-                            value: _testPitchSmoother,
-                            onChanged: (value) {
-                              setDialogState(() {
-                                _testPitchSmoother = value;
-                              });
-                            },
-                            activeColor: Colors.purple,
-                          ),
-                          SwitchListTile(
-                            title: const Text('Show Component Stats', style: TextStyle(color: Color(0xFFF5F5DD))),
-                            subtitle: const Text('Display performance metrics', style: TextStyle(color: Color(0xFFF5F5DD), fontSize: 12)),
-                            value: _showComponentStats,
-                            onChanged: (value) {
-                              setDialogState(() {
-                                _showComponentStats = value;
-                              });
-                            },
-                            activeColor: Colors.cyan,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      if (mounted) {
-                        setState(() {
-                          _bpm = tempBpm.round();
-                          _isMaleSinger = tempIsMaleSinger;
-                          // Update component stats collection
-                          if (_showComponentStats) {
-                            _updateComponentStats();
-                          }
-                        });
-                      }
-                      Navigator.pop(context);
-                    },
-                    child: const Text(
-                      'Close',
-                      style: TextStyle(color: Color(0xFFF5F5DD)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
+      builder: (context) => ExerciseSettingsDialog(
+        initialBpm: _bpm,
+        initialIsMaleSinger: _isMaleSinger,
+        showDebugControls: true, // Enable debug controls
+        onSettingsChanged: (bpm, isMaleSinger, debugSettings) {
+          setState(() {
+            _bpm = bpm;
+            _isMaleSinger = isMaleSinger;
+            
+            // Update services with new settings
+            _pitchDetectionService.updateSingerGender(isMaleSinger);
+            _pitchDetectionService.updateBPM(bpm);
+            
+            // Update debug settings
+            _pitchDetectionService.setDebugMode(
+              testWiener: debugSettings['testWienerFilter'],
+              testVAD: debugSettings['testVoiceActivityDetector'],
+              testSmoother: debugSettings['testPitchSmoother'],
+              showStats: debugSettings['showComponentStats'],
+            );
+            
+            if (_metronomeService.isEnabled) {
+              _metronomeService.start();
+            }
+            
+            // Restart exercise with new settings if currently playing
+            if (_isPlaying) {
+              _stopExercise();
+              _startExercise();
+            }
+          });
         },
       ),
     );
   }
 
-  /// Update component statistics for debugging
-  void _updateComponentStats() {
-    if (!_showComponentStats) return;
-    
-    _componentStats['pitch_detection'] = {
-      'confidence': _pitchConfidence,
-      'smoothed_confidence': _smoothedConfidence,
-      'voice_detected': _isVoiceDetected,
-      'expected_note': _expectedNote,
-      'detected_note': _currentDetectedNote,
-    };
-    
-    _componentStats['performance'] = {
-      'processing_load': _getProcessingLoad(),
-      'memory_usage': _getMemoryUsage(),
-      'system_health': _getSystemHealth(),
-    };
-  }
-
-  /// Build component statistics widgets for debug display
-  List<Widget> _buildComponentStatsWidgets() {
-    return _componentStats.entries.map((entry) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(
-          '${entry.key}: ${entry.value}',
-          style: const TextStyle(color: Colors.white, fontSize: 10),
-        ),
-      );
-    }).toList();
-  }
-
-  Widget _buildPerformanceIndicator(String label, double value, Color color) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white, fontSize: 10)),
-        const SizedBox(height: 2),
-        Container(
-          width: 30,
-          height: 4,
-          decoration: BoxDecoration(
-            color: Colors.grey[700],
-            borderRadius: BorderRadius.circular(2),
-          ),
-          child: FractionallySizedBox(
-            alignment: Alignment.centerLeft,
-            widthFactor: value.clamp(0.0, 1.0),
-            child: Container(
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  void dispose() {
-    // Cancel all timers
+  /// Begin playing the exercise after countdown finishes
+  void _startExercise() {
+    if (!mounted) return;
+   
     _playbackTimer?.cancel();
-    _countdownTimer?.cancel();
-    _metronomeTimer?.cancel();
-    
-    // Dispose animation controllers
-    _pulseController.dispose();
-    _glowController.dispose();
-    
-    // Clean up audio resources
-    _stopPitchDetection();
-    _recorder?.closeRecorder();
-    _metronomePlayer?.closePlayer();
-    
-    // Dispose scroll controller
-    _noteScrollController.dispose();
-    
-    // Reset screen orientation to allow all orientations
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    
-    super.dispose();
-  }
-
-  // ============================================================================
-  // EXERCISE PLAYBACK CONTROL
-  // ============================================================================
-
-  /// Start the main exercise playback
-  void _startExercise() async {
-    if (_scoreFuture == null) return;
-
-    final score = await _scoreFuture!;
-    
-    // Build note positions cache for efficient lookup
-    _buildNotePositions(score);
-    
+   
     setState(() {
       _isPlaying = true;
       _isPaused = false;
+      _reachedEnd = false;
       _currentTime = 0.0;
       _currentNoteIndex = 0;
-      _correctNotesCount = 0;
       _noteCorrectness.clear();
-      _reachedEnd = false;
-      _expectedNote = null;
-      _currentDetectedNote = null;
-      _isCorrect = false;
-      _pitchConfidence = 0.0;
+      _correctNotesCount = 0;
     });
 
-    // Reset timing
+    _notePositions.clear();
+    _noteNames.clear();
+ 
     _elapsedBeforePauseSec = 0.0;
+    _playbackStopwatch?.stop();
     _playbackStopwatch = Stopwatch()..start();
 
-    // Start audio systems
-    _startPitchDetection();
-    if (_metronomeEnabled) {
-      _startMetronome();
+    _scoreFuture.then((score) {
+      if (!mounted) return;
+      _updateExpectedNote(score);
+      _metronomeService.setTimeSignature(score.beats, score.beatType);
+    });
+
+    // Start pitch detection
+    _pitchDetectionService.startDetection(_expectedNote);
+
+    // Start metronome if enabled
+    if (_metronomeService.isEnabled) {
+      _metronomeService.start();
     }
 
-    // Start the main playback timer
-    _startPlaybackTimer(score);
+    _startPlaybackTimer();
   }
 
-  /// Start the playback timer that drives the exercise progression
-  void _startPlaybackTimer(Score score) {
-    const updateInterval = Duration(milliseconds: 50); // 20 FPS for smooth updates
-    
-    _playbackTimer = Timer.periodic(updateInterval, (timer) {
-      if (!_isPlaying || _isPaused) return;
-
-      // Calculate current time based on stopwatch
-      final elapsedMs = _playbackStopwatch?.elapsedMilliseconds ?? 0;
-      _currentTime = _elapsedBeforePauseSec + (elapsedMs / 1000.0);
-
-      _updatePlaybackState(score);
+  /// Optimized playback timer with reduced frequency
+  void _startPlaybackTimer() {
+    _scoreFuture.then((score) {
+      if (!mounted) return;
+     
+      // Build note positions cache once
+      _buildNotePositions(score);
+     
+      // Start playback timer with 100ms interval (was 50ms)
+      _playbackTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+       
+        _updatePlaybackState(score);
+      });
     });
   }
 
-  /// Update the playback state including note progression and metronome
+  /// Optimized playback state update
   void _updatePlaybackState(Score score) {
-    setState(() {
-      // Update metronome if enabled
-      if (_metronomeEnabled) {
-        _updateMetronome(score);
-      }
+    if (_reachedEnd) return;
+   
+    final double stopwatchSec = (_playbackStopwatch?.elapsedMicroseconds ?? 0) / 1e6;
+    final double newCurrentTime = _elapsedBeforePauseSec + stopwatchSec;
+   
+    // Only update if time has changed significantly (avoid unnecessary setState calls)
+    if ((newCurrentTime - _currentTime).abs() > 0.05) { // 50ms threshold
+      setState(() {
+        _currentTime = newCurrentTime;
+      });
+    } else {
+      _currentTime = newCurrentTime; // Update without setState for minor changes
+    }
+   
+    // Calculate total beats up to current time
+    final double metronomeBeatUnitSec = (60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0));
+    final double currentBeats = _currentTime / metronomeBeatUnitSec;
 
-      // Update current note and expected note
-      _updateCurrentNote(score);
-      
-      // Scroll to current note in the note row
-      _scrollToCurrentNote();
-      
-      // Update component statistics
-      _updateComponentStats();
-    });
+    // End-of-sheet handling
+    if (_currentTime >= _lastMeasurePosition) {
+      _handleExerciseEnd();
+      return;
+    }
+   
+    // Handle metronome
+    _updateMetronome(currentBeats, metronomeBeatUnitSec);
+   
+    // Find and update current note using cached positions
+    _updateCurrentNote(score, currentBeats);
   }
 
-  /// Update metronome timing and trigger clicks
-  void _updateMetronome(Score score) {
-    // Calculate current beat position
-    const double secondsPerMinute = 60.0;
-    final int beatType = score.beatType;
-    final double beatUnitSeconds = (secondsPerMinute / _bpm) * (4.0 / beatType);
-    final double currentBeats = _currentTime / beatUnitSeconds;
-    final int wholeBeat = currentBeats.floor();
+  /// Handle exercise completion
+  void _handleExerciseEnd() {
+    setState(() {
+      _reachedEnd = true;
+      _isPlaying = false;
+    });
+    _playbackTimer?.cancel();
+    _stopPitchDetection();
+    _stopMetronome();
+    _showCompletionDialog();
+  }
 
-    // Trigger metronome click on new beats
-    if (wholeBeat != _lastWholeBeat && wholeBeat >= 0) {
-      _lastWholeBeat = wholeBeat;
+  /// Update metronome state
+  void _updateMetronome(double currentBeats, double metronomeBeatUnitSec) {
+    if (!_metronomeEnabled) return;
+   
+    // Calculate target beat with a small look-ahead to compensate for audio latency
+    // This helps the metronome click sound to align better with the visual beat
+    final double lookAheadSec = 0.03; // 30ms look-ahead to compensate for audio latency
+    final double adjustedCurrentBeats = currentBeats + (lookAheadSec / metronomeBeatUnitSec);
+    final int targetBeat = adjustedCurrentBeats.floor();
+    
+    const double clickDurationSec = 0.05; // 50ms
+    
+    // Process any beats that need to be triggered
+    while (_lastWholeBeat < targetBeat) {
+      _lastWholeBeat++;
+      final int beatsPerMeasure = (_timeSigBeats ?? 4).clamp(1, 12);
+      final bool isDownbeat = (_lastWholeBeat % beatsPerMeasure) == 0;
+      final double beatStartSec = _lastWholeBeat * metronomeBeatUnitSec;
       
-      // Determine if this is a downbeat (first beat of measure)
-      final int beatsPerMeasure = score.beats;
-      final bool isDownbeat = (wholeBeat % beatsPerMeasure) == 0;
-      
-      _triggerMetronome(downbeat: isDownbeat);
+      // Only trigger if we're still within the valid playback range
+      if (beatStartSec + clickDurationSec <= _lastMeasurePosition) {
+        _triggerMetronome(downbeat: isDownbeat);
+      } else {
+        break;
+      }
     }
   }
 
-  /// Update the current note index and expected note
-  void _updateCurrentNote(Score score) {
-    // Calculate current beat position
-    const double secondsPerMinute = 60.0;
-    final int beatType = score.beatType;
-    final double beatUnitSeconds = (secondsPerMinute / _bpm) * (4.0 / beatType);
-    final double currentBeats = _currentTime / beatUnitSeconds;
-
-    // Use binary search for efficient note lookup
-    final newNoteIndex = _findCurrentNoteIndex(currentBeats);
-    
-    // Update expected/current note on index change
-    if (!_isCountingIn && newNoteIndex != _currentNoteIndex) {
+  /// Optimized note finding and updating
+  void _updateCurrentNote(Score score, double currentBeats) {
+    // Use cached note positions if available
+    if (_notePositions.isEmpty) return;
+   
+    // Binary search for current note
+    int newNoteIndex = _findCurrentNoteIndex(currentBeats);
+   
+    // Update expected/current note on index change or if not set yet
+    if (newNoteIndex != _currentNoteIndex || _expectedNote == null) {
       _currentNoteIndex = newNoteIndex;
       _updateExpectedNote(score);
     }
-
-    // Stop if we've reached the end of the sheet
-    if (_currentTime >= _lastMeasurePosition) {
-      _reachedEnd = true;
-      _isPlaying = false;
-      _playbackTimer?.cancel();
-      _stopPitchDetection();
-      _stopMetronome();
-      
-      // Show completion dialog
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _showCompletionDialog();
-      });
-    }
   }
 
-  /// Scroll the note row to keep current note visible
-  void _scrollToCurrentNote() {
-    if (_noteScrollController.hasClients && _currentNoteIndex < _noteNames.length) {
-      const double noteWidth = 48.0; // 40 + 8 spacing
-      final double targetOffset = _currentNoteIndex * noteWidth;
-      final double maxOffset = _noteScrollController.position.maxScrollExtent;
-      final double clampedOffset = math.min(targetOffset, maxOffset);
-      
-      _noteScrollController.animateTo(
-        clampedOffset,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
-    }
-  }
-
-  /// Update the expected note based on current position
-  void _updateExpectedNote(Score score) {
-    int noteIndex = 0;
-    for (final measure in score.measures) {
-      for (final note in measure.notes) {
-        if (!note.isRest) {
-          if (noteIndex == _currentNoteIndex) {
-            _expectedNote = '${note.step}${note.octave}';
-            return;
-          }
-          noteIndex++;
-        }
-      }
-    }
-    _expectedNote = null;
-  }
-
-  /// Get the duration of a note in beats
+  // Helper method to get note duration in beats
   double _getNoteDuration(Note note) {
-    // Convert note type to duration in beats
     switch (note.type) {
-      case 'whole': return 4.0;
-      case 'half': return 2.0;
-      case 'quarter': return 1.0;
-      case 'eighth': return 0.5;
-      case 'sixteenth': return 0.25;
-      default: return 1.0; // Default to quarter note
+      case 'whole':
+        return 4.0;
+      case 'half':
+        return 2.0;
+      case 'quarter':
+        return 1.0;
+      case 'eighth':
+        return 0.5;
+      case '16th':
+        return 0.25;
+      default:
+        return 1.0; // Default to quarter note duration
     }
   }
 
-  /// Pause the exercise
-  void _pauseExercise() {
-    setState(() {
-      _isPaused = true;
-      _isPlaying = false;
-    });
-    
-    // Store elapsed time before pause
-    _elapsedBeforePauseSec = _currentTime;
-    _playbackStopwatch?.stop();
-    
-    // Pause audio systems
-    _stopPitchDetection();
-    _stopMetronome();
-    
-    // Cancel playback timer
-    _playbackTimer?.cancel();
+  void _scrollToCurrentNote() {
+    if (!_noteScrollController.hasClients) return;
+   
+    // Calculate the position to scroll to
+    final itemWidth = 100.0; // Approximate width of each note item including padding
+    final screenWidth = MediaQuery.of(context).size.width;
+    final targetPosition = _currentNoteIndex * itemWidth - (screenWidth / 2) + (itemWidth / 2);
+   
+    // Animate to the target position
+    _noteScrollController.animateTo(
+      targetPosition.clamp(0.0, _noteScrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
-  /// Resume the exercise from pause
-  void _resumeExercise() async {
-    if (_scoreFuture == null) return;
-    
-    final score = await _scoreFuture!;
-    
-    setState(() {
-      _isPlaying = true;
-      _isPaused = false;
-    });
-    
-    // Resume timing from where we left off
-    _playbackStopwatch = Stopwatch()..start();
-    
-    // Resume audio systems
-    _startPitchDetection();
-    if (_metronomeEnabled) {
-      _startMetronome();
-    }
-    
-    // Resume playback timer
-    _startPlaybackTimer(score);
+  /// Calculate adaptive detection parameters based on BPM and note duration
+  void _calculateAdaptiveDetection() {
+    // This method is now handled by the PitchDetectionService
+    // Update the service with current note duration
+    _pitchDetectionService.updateNoteDuration(_currentNoteDuration);
   }
 
-  void _stopExercise() {
-    // Cancel all timers
-    _playbackTimer?.cancel();
-    _playbackTimer = null;
-    _countdownTimer?.cancel();
-    
-    // Stop pitch detection
-    _stopPitchDetection();
-    _stopMetronome(immediate: true);
-    
-    setState(() {
-      _isPlaying = false;
-      _isPaused = false;
-      _currentTime = 0.0;
-      _showCountdown = false;
-      _reachedEnd = false;
-      _currentDetectedNote = null;
-      _expectedNote = null;
-      _isCorrect = false;
-      _pitchConfidence = 0.0;
-    });
-    _elapsedBeforePauseSec = 0.0;
-    _playbackStopwatch?.stop();
-    _playbackStopwatch = null;
-    
-    // Clear note position cache
+  /// Build note positions cache for efficient lookup
+  void _buildNotePositions(Score score) {
     _notePositions.clear();
     _noteNames.clear();
-    _needsNoteListRebuild = true;
-  }
-
-  void _startMetronome() {
-    _metronomeTimer?.cancel();
-    // No separate timer during playback; we drive clicks from the playback timer via _currentTime
-    _lastWholeBeat = -1;
-  }
-
-  void _stopMetronome({bool immediate = false}) {
-    _metronomeTimer?.cancel();
-    _metronomeTimer = null;
-    // Immediately stop any in-flight metronome sound to avoid extra click at the end
-    try {
-      if (_metronomePlayer!.isOpen() && _metronomePlayer!.isPlaying) {
-        if (immediate) {
-          // Hard stop (pause/stop actions)
-          _metronomePlayer!.stopPlayer();
-        } else {
-          // Let current click finish naturally at sheet end
-          // Do nothing; player will end on its own
-        }
-      }
-    } catch (_) {}
-    if (mounted) setState(() => _metronomeFlash = false);
-  }
-
-  Future<void> _playMetronomeClick({bool downbeat = false}) async {
-    try {
-      if (!_metronomePlayer!.isOpen()) {
-        try { await _metronomePlayer!.openPlayer(); } catch (_) {}
-        if (!_metronomePlayer!.isOpen()) {
-          // Fallback if we still cannot open
-          try { SystemSound.play(SystemSoundType.click); } catch (_) {}
-          return;
-        }
-      }
-      // Avoid cutting the click if it's still within its duration; otherwise, force stop to allow a new click
-      if (_metronomePlayer!.isPlaying) {
-        final int nowUs = DateTime.now().microsecondsSinceEpoch;
-        final int elapsedMs = ((nowUs - _lastClickStartUs) / 1000).round();
-        if (elapsedMs < _clickDurationMs - 5) {
-          // Still in click window → skip retrigger to avoid cut
-          return;
-        }
-        // Click should have finished by now but player still reports playing → stop to start the next
-        try { await _metronomePlayer!.stopPlayer(); } catch (_) {}
-      }
-      final Uint8List data = _generateClickPcm(
-        frequencyHz: downbeat ? 1400 : 1000,
-        durationMs: _clickDurationMs,
-        sampleRate: 44100,
-        amplitude: downbeat ? 0.6 : 0.4,
-      );
-      _lastClickStartUs = DateTime.now().microsecondsSinceEpoch;
-      try {
-        await _metronomePlayer!.startPlayer(
-          fromDataBuffer: data,
-          codec: Codec.pcm16,
-          numChannels: 1,
-          sampleRate: 44100,
-        );
-      } catch (_) {
-        // Fallback to system click if start failed
-        try { SystemSound.play(SystemSoundType.click); } catch (_) {}
-      }
-    } catch (e) {
-      // As a fallback, try a system click
-      try { SystemSound.play(SystemSoundType.click); } catch (_) {}
-    }
-  }
-
-  // Web beep removed; native click path only
-
-  void _triggerMetronome({required bool downbeat}) {
-    // Guard: if we've reached or passed the sheet end or not actively playing, do not click
-    if (_currentTime >= _lastMeasurePosition || !_isPlaying) {
-      return;
-    }
-    _playMetronomeClick(downbeat: downbeat);
-    if (mounted) {
-      setState(() => _metronomeFlash = true);
-      Timer(const Duration(milliseconds: 120), () {
-        if (mounted) setState(() => _metronomeFlash = false);
-      });
-    }
-  }
-
-  Uint8List _generateClickPcm({
-    required double frequencyHz,
-    required int durationMs,
-    required int sampleRate,
-    required double amplitude,
-  }) {
-    final int totalSamples = (sampleRate * durationMs / 1000).round();
-    final Int16List samples = Int16List(totalSamples);
-    final double twoPiF = 2 * math.pi * frequencyHz;
-
-    for (int i = 0; i < totalSamples; i++) {
-      final double t = i / sampleRate;
-      // Simple short sine with exponential decay for a clicky feel
-      final double envelope = math.exp(-20 * t); // fast decay
-      final double s = math.sin(twoPiF * t) * amplitude * envelope;
-      samples[i] = (s * 32767).clamp(-32768.0, 32767.0).toInt();
-    }
-    return samples.buffer.asUint8List();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5), // Light gray background to match screenshot
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFF5F5F5),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF8B4511)),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text(
-          widget.fileName,
-          style: const TextStyle(
-            color: Colors.black,
-            fontSize: 18,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings, color: Color(0xFF8B4511)),
-            onPressed: () {
-              _showSettingsDialog();
-            },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // ============================================================================
-          // MAIN CONTENT - The exercise interface (music sheet, controls, etc.)
-          // ============================================================================
-          _buildBody(),
-          
-          // ============================================================================
-          // OVERLAYS - Countdown and metronome indicator
-          // ============================================================================
-          if (_showCountdown && _countdown > 0)
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(32),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF8B4511).withOpacity(0.7),
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  _countdown.toString(),
-                  style: const TextStyle(
-                    color: Color(0xFFF5F5DD),
-                    fontSize: 72,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          if (_metronomeEnabled && _isPlaying)
-            Positioned(
-              top: 16,
-              right: 16,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 80),
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: _metronomeFlash ? Colors.lightBlueAccent : Color(0xFFF5F5DD).withOpacity(0.24),
-                  shape: BoxShape.circle,
-                  boxShadow: _metronomeFlash
-                      ? [
-                          BoxShadow(
-                            color: Colors.lightBlueAccent.withOpacity(0.6),
-                            blurRadius: 12,
-                            spreadRadius: 2,
-                          ),
-                        ]
-                      : [],
-                ),
-               ),
-             ),
-          
-          // Debug Panel Overlay
-          if (_showDebugPanel)
-            Positioned(
-              top: 50,
-              left: 16,
-              child: Container(
-                width: 300,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Debug Panel',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_testWienerFilter) ...[
-                      const Text('🔧 Wiener Filter Test Mode', style: TextStyle(color: Colors.green, fontSize: 12)),
-                      const SizedBox(height: 4),
-                    ],
-                    if (_testVoiceActivityDetector) ...[
-                      const Text('🎤 VAD Test Mode', style: TextStyle(color: Colors.orange, fontSize: 12)),
-                      const SizedBox(height: 4),
-                    ],
-                    if (_testPitchSmoother) ...[
-                      const Text('🎵 Pitch Smoother Test Mode', style: TextStyle(color: Colors.purple, fontSize: 12)),
-                      const SizedBox(height: 4),
-                    ],
-                    if (_showComponentStats && _componentStats.isNotEmpty) ...[
-                      const Text('📊 Component Statistics:', style: TextStyle(color: Colors.cyan, fontSize: 12)),
-                      const SizedBox(height: 4),
-                      ..._buildComponentStatsWidgets(),
-                      const SizedBox(height: 8),
-                      // Real-time performance indicators
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildPerformanceIndicator('CPU', _getProcessingLoad(), Colors.blue),
-                          _buildPerformanceIndicator('MEM', _getMemoryUsage(), Colors.green),
-                          _buildPerformanceIndicator('HEALTH', _getSystemHealth(), _getHealthColor()),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                    ],
-                    Text(
-                      'Detected: ${_currentDetectedNote ?? "None"}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                    Text(
-                      'Expected: ${_expectedNote ?? "None"}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                    Text(
-                      'Confidence: ${(_pitchConfidence * 100).toStringAsFixed(1)}%',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                    Text(
-                      'Voice: ${_isVoiceDetected ? "Yes" : "No"}',
-                      style: TextStyle(
-                        color: _isVoiceDetected ? Colors.green : Colors.red,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-         ],
-       ),
-     );
-  }
-
-  // ============================================================================
-  // BODY BUILDER - Main content area of the exercise screen
-  // ============================================================================
-  
-  /// Build the main content area, handling loading, errors, and the exercise interface
-  Widget _buildBody() {
-    // ============================================================================
-    // LOADING STATE - Show spinner while music score is loading
-    // ============================================================================
-    if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
-        ),
-      );
-    }
-
-    // ============================================================================
-    // ERROR STATE - Show error message with retry button if loading failed
-    // ============================================================================
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(_error!, style: const TextStyle(color: Colors.red)),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadScore,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFFF5F5DD),
-                foregroundColor: const Color(0xFF8B4511),
-              ),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return FutureBuilder<Score>(
-      future: _scoreFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(
-            child: Text('Error: ${snapshot.error}'),
-          );
-        }
-
-        if (!snapshot.hasData) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
-            ),
-          );
-        }
-
-        final score = snapshot.data!;
-        
-        // Calculate total duration based on actual note durations
-        _lastMeasurePosition = _calculateScoreDurationSeconds(score);
-        _totalDuration = _lastMeasurePosition;
-
-        return SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // ============================================================================
-                  // MUSIC SHEET DISPLAY - The main visual area showing the musical notation
-                  // ============================================================================
-                  Expanded(
-                    flex: 5,
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF8B4511).withOpacity(0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: MusicSheet(
-                          score: score,
-                          isPlaying: _isPlaying,
-                          currentTime: _currentTime,
-                          currentNoteIndex: _currentNoteIndex,
-                          bpm: _bpm.toDouble(),
-                          isCorrect: _isCorrect,
-                        ),
-                      ),
-                    ),
-                  ),
-                  
-                  // ============================================================================
-                  // NOTE PROGRESS ROW - Horizontal scrollable list showing all notes in order
-                  // ============================================================================
-                  Container(
-                    height: 50,
-                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: _buildScrollableNoteRow(score),
-                  ),
-                  
-                  const SizedBox(height: 1),
-                  
-                  // ============================================================================
-                  // CONTROL BUTTONS - Play, pause, metronome, and other exercise controls
-                  // ============================================================================
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.3),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        // Replay Button
-                        Container(
-                          width: 50,
-                          height: 50,
-                          child: IconButton(
-                            icon: const Icon(Icons.replay, size: 24, color: Color(0xFF8B4511)),
-                            onPressed: () {
-                              _stopExercise();
-                              _startCountdown();
-                            },
-                          ),
-                        ),
-                        
-                        // Main Play/Pause Button
-                        Container(
-                          width: 50,
-                          height: 50,
-                          child: IconButton(
-                            icon: Icon(
-                              _isPlaying ? Icons.pause : 
-                              _isPaused ? Icons.play_arrow : 
-                              Icons.play_arrow,
-                              size: 24,
-                              color: const Color(0xFF8B4511),
-                            ),
-                            onPressed: () {
-                              if (_isPlaying) {
-                                _pauseExercise();
-                              } else if (_isPaused) {
-                                _resumeExercise();
-                              } else {
-                                _startCountdown();
-                              }
-                            },
-                          ),
-                        ),
-                        
-                        // Metronome Toggle Button
-                        Container(
-                          width: 50,
-                          height: 50,
-                          child: IconButton(
-                            icon: Image.asset(
-                              'assets/metronome.png',
-                              width: 24,
-                              height: 24,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _metronomeEnabled = !_metronomeEnabled;
-                              });
-                              if (_metronomeEnabled) {
-                                _startMetronome();
-                                _unlockWebAudioIfNeeded();
-                              } else {
-                                _stopMetronome();
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 5),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  // ============================================================================
-  // NOTE ROW BUILDER - Creates the horizontal scrollable list of notes
-  // ============================================================================
-  
-  /// Build a horizontal scrollable row showing all notes in the exercise
-  Widget _buildScrollableNoteRow(Score score) {
-    // Only rebuild note list when necessary
-    if (_needsNoteListRebuild || _noteNames.isEmpty) {
-      _noteNames.clear();
+    double totalBeats = 0.0;
+   
     for (final measure in score.measures) {
       for (final note in measure.notes) {
         if (!note.isRest) {
-            _noteNames.add("${note.step}${note.octave}");
+          _notePositions.add(totalBeats);
+          _noteNames.add('${note.step}${note.octave}');
         }
+        totalBeats += _getNoteDuration(note);
       }
-      }
-      _needsNoteListRebuild = false;
     }
     
-    // Create horizontal scrollable list of notes
-    return ListView.separated(
-      controller: _noteScrollController,
-      scrollDirection: Axis.horizontal,
-      itemCount: _noteNames.length,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      separatorBuilder: (context, idx) => const SizedBox(width: 8),
-      itemBuilder: (context, idx) {
-        // Determine the current state of this note
-        final isCurrentNote = idx == _currentNoteIndex;
-        final wasCorrect = _noteCorrectness[idx];
-        
-        // Choose color based on note status
-        Color noteColor;
-        Color textColor;
-        
-        if (isCurrentNote) {
-          noteColor = _isCorrect ? Colors.green : Colors.red;
-          textColor = Color(0xFFF5F5DD);
-        } else if (wasCorrect != null) {
-          noteColor = wasCorrect ? Colors.green : Colors.red;
-          textColor = Color(0xFFF5F5DD);
-        } else {
-          noteColor = Color(0xFFF5F5DD);
-          textColor = const Color(0xFF8B4511);
-        }
-
-        // Add confidence indicator for current note
-        if (isCurrentNote && _pitchConfidence > 0) {
-          // Show confidence as border thickness or opacity
-          final confidenceOpacity = _pitchConfidence.clamp(0.3, 1.0);
-          noteColor = noteColor.withOpacity(confidenceOpacity);
-        }
-
-        return Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: noteColor,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(
-              color: Colors.grey[400]!,
-              width: 1,
-            ),
-          ),
-          child: Center(
-            child: Text(
-              _noteNames[idx], // Use cached note names
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w500,
-                fontSize: 11,
-              ),
-            ),
-          ),
-        );
-      },
-    );
+    // Calculate the actual end position of the exercise based on score content
+    _lastMeasurePosition = _calculateScoreDurationSeconds(score);
   }
 
-  // Calculate duration for a measure based on the score's time signature and current BPM
-  double _calculateMeasureDuration(Score score) {
-    const double secondsPerMinute = 60.0;
-    // Get time signature from the score
-    final int beats = score.beats;
-    final int beatType = score.beatType;
-    // Duration of a single beat as defined by time signature (e.g., eighth in 6/8)
-    final double beatUnitSeconds = (secondsPerMinute / _bpm) * (4.0 / beatType);
-    // Measure duration = beats per measure * beat unit duration
-    return beats * beatUnitSeconds;
-  }
-
-  // Calculate precise score duration in seconds by summing note durations (including rests)
+  /// Calculate precise score duration in seconds by summing note durations (including rests)
   double _calculateScoreDurationSeconds(Score score) {
     const double secondsPerMinute = 60.0;
     final int beatType = score.beatType;
@@ -1769,19 +564,55 @@ Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
     return totalBeats * beatUnitSeconds;
   }
 
-  // ============================================================================
-  // COMPLETION HANDLING - Show results and save progress when exercise finishes
-  // ============================================================================
-  
-  /// Display completion dialog with score and save results to database
+  /// Binary search for current note index
+  int _findCurrentNoteIndex(double currentBeats) {
+    if (_notePositions.isEmpty) return 0;
+   
+    int left = 0;
+    int right = _notePositions.length - 1;
+    int result = 0;
+   
+    while (left <= right) {
+      int mid = (left + right) ~/ 2;
+      if (_notePositions[mid] <= currentBeats) {
+        result = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+   
+    return result;
+  }
+
+  /// Stop pitch detection (delegated to service)
+  void _stopPitchDetection() {
+    _pitchDetectionService.stopDetection();
+  }
+
+  /// Stop metronome (delegated to service)
+  void _stopMetronome() {
+    _metronomeService.stop();
+  }
+
+  /// Trigger metronome click (delegated to service)
+  void _triggerMetronome({required bool downbeat}) {
+    _metronomeService.updateTiming(
+      _currentTime / ((60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0))),
+      (60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0)),
+      _lastMeasurePosition,
+    );
+  }
+
+  /// Show completion dialog with score and save results to database
   void _showCompletionDialog() {
     if (!mounted) return;
-    
+   
     // Calculate final score statistics
-    final int total = _totalPlayableNotes;                    // Total notes in exercise
-    final int correct = _correctNotesCount.clamp(0, total);   // Correctly played notes
+    final int total = _totalPlayableNotes;
+    final int correct = _correctNotesCount.clamp(0, total);
     final String percent = total > 0
-        ? ((correct / total) * 100).clamp(0, 100).toStringAsFixed(0)  // Percentage score
+        ? ((correct / total) * 100).clamp(0, 100).toStringAsFixed(0)
         : '0';
 
     // Save this practice session to the database for progress tracking
@@ -1818,90 +649,415 @@ Threshold: ${(_confidenceThreshold * 100).toStringAsFixed(0)}%
                 Navigator.of(context).pop();
               },
               child: const Text('Close', style: TextStyle(color: Color(0xFFF5F5DD))),
-             ),
-             ElevatedButton(
-               style: ElevatedButton.styleFrom(
-                 backgroundColor: Colors.lightBlueAccent,
-                 foregroundColor: const Color(0xFF8B4511),
-               ),
-               onPressed: () {
-                 Navigator.of(context).pop();
-                 _stopExercise();
-                 _startCountdown();
-               },
-               child: const Text('Try Again'),
-             ),
-           ],
-         );
-       },
-     );
-   }
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.lightBlueAccent,
+                foregroundColor: const Color(0xFF8B4511),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _stopExercise();
+                _startCountdown();
+              },
+              child: const Text('Replay'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-   /// Save practice session results to database for progress tracking
-   void _savePracticeSession(int correct, int total, String percent) async {
-     try {
-       final dbHelper = DatabaseHelper();
-       await dbHelper.insertPracticeSession({
-         'fileName': widget.fileName,
-         'filePath': widget.filePath,
-         'correctNotes': correct,
-         'totalNotes': total,
-         'percentage': int.parse(percent),
-         'bpm': _bpm,
-         'singerGender': _singerGender,
-         'timestamp': DateTime.now().millisecondsSinceEpoch,
-       });
-     } catch (e) {
-       print('Failed to save practice session: $e');
-     }
-   }
+  /// Save the completed practice session to the database
+  Future<void> _savePracticeSession(int correctNotes, int totalNotes, String percentage) async {
+    try {
+      final now = DateTime.now();
+      final date = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final time = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final duration = _currentTime;
+     
+      final session = {
+        'level': widget.fileName, // Use fileName instead of level
+        'score': correctNotes,
+        'total_notes': totalNotes,
+        'percentage': double.parse(percentage),
+        'practice_date': date,
+        'practice_time': time,
+        'duration_seconds': duration,
+        'created_at': now.toIso8601String(),
+      };
 
-   // ============================================================================
-   // NOTE POSITION CACHING - Build and use cached note positions for performance
-   // ============================================================================
+      final dbHelper = DatabaseHelper();
+      await dbHelper.insertPracticeSession(session);
+    } catch (e) {
+      debugPrint('Error saving practice session: $e');
+    }
+  }
 
-   /// Build note positions cache for efficient note lookup during playback
-   void _buildNotePositions(Score score) {
-     if (_notePositions.isNotEmpty) return; // Already built
+  /// Build the main content area, handling loading, errors, and the exercise interface
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
+        ),
+      );
+    }
 
-     _notePositions.clear();
-     _noteNames.clear();
-     
-     double currentBeat = 0.0;
-     
-     for (final measure in score.measures) {
-       for (final note in measure.notes) {
-         if (!note.isRest) {
-           _notePositions.add(currentBeat);
-           _noteNames.add('${note.step}${note.octave}');
-         }
-         currentBeat += _getNoteDuration(note);
-       }
-     }
-     
-     _needsNoteListRebuild = false;
-   }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(_error!, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadScore,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFF5F5DD),
+                foregroundColor: const Color(0xFF8B4511),
+              ),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
 
-   /// Find current note index using binary search for performance
-   int _findCurrentNoteIndex(double currentBeats) {
-     if (_notePositions.isEmpty) return 0;
+    return FutureBuilder<Score>(
+      future: _scoreFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text('Error: ${snapshot.error}'),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
+            ),
+          );
+        }
+
+        final score = snapshot.data!;
+
+        return SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Music Sheet Display
+                  Expanded(
+                    flex: 5,
+                    child: Container(
+                      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF8B4511).withValues(alpha: 0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: MusicSheet(
+                          score: score,
+                          isPlaying: _isPlaying,
+                          currentTime: _currentTime,
+                          currentNoteIndex: _currentNoteIndex,
+                          bpm: _bpm,
+                          isCorrect: _isCorrect,
+                        ),
+                      ),
+                    ),
+                  ),
+                 
+                  // Note Progress Row
+                  Container(
+                    height: 50,
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: NoteProgressRow(
+                      score: score,
+                      currentNoteIndex: _currentNoteIndex,
+                      noteCorrectness: _noteCorrectness,
+                      isCorrect: _isCorrect,
+                      pitchConfidence: _pitchConfidence,
+                      scrollController: _noteScrollController,
+                    ),
+                  ),
+                 
+                  const SizedBox(height: 1),
+                 
+                  // Control Buttons
+                  ExerciseControls(
+                    isPlaying: _isPlaying,
+                    isPaused: _isPaused,
+                    metronomeEnabled: _metronomeService.isEnabled,
+                    onPlay: () {
+                      if (_isPaused) {
+                        _resumeExercise();
+                      } else {
+                        _startCountdown();
+                      }
+                    },
+                    onPause: _pauseExercise,
+                    onReplay: () {
+                      _stopExercise();
+                      _startCountdown();
+                    },
+                    onMetronomeToggle: () {
+                      setState(() {
+                        _metronomeEnabled = !_metronomeEnabled;
+                      });
+                      _metronomeService.setEnabled(_metronomeEnabled);
+                      if (_metronomeEnabled) {
+                        _metronomeService.start();
+                      } else {
+                        _metronomeService.stop();
+                      }
+                    },
+                    onSettings: _showSettingsDialog,
+                  ),
+                 
+                  const SizedBox(height: 5),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// Update expected note and recalculate adaptive detection
+  void _updateExpectedNote(Score score) {
+    // Find the current note in the score
+    int totalNotes = 0;
+    for (final measure in score.measures) {
+      for (final note in measure.notes) {
+        if (totalNotes == _currentNoteIndex && !note.isRest) {
+          setState(() {
+            _expectedNote = "${note.step}${note.octave}";
+            _isCorrect = false;
+            // Update current note duration for adaptive detection
+            _currentNoteDuration = _getNoteDuration(note);
+            // Recalculate adaptive detection parameters
+            _calculateAdaptiveDetection();
+          });
+          _scrollToCurrentNote(); // Scroll to keep current note visible
+          
+          // Update pitch detection service with new expected note (without restarting)
+          _pitchDetectionService.updateExpectedNote(_expectedNote);
+          return;
+        }
+        if (!note.isRest) {
+          totalNotes++;
+        }
+      }
+    }
+    setState(() {
+      _expectedNote = null;
+      _isCorrect = false;
+    });
+    
+    // Update pitch detection service with null expected note
+    _pitchDetectionService.updateExpectedNote(_expectedNote);
+  }
+
+  void _pauseExercise() {
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+   
+    _pitchDetectionService.stopDetection();
+    _metronomeService.stop(immediate: true);
+    
+    final double stopwatchSec = (_playbackStopwatch?.elapsedMicroseconds ?? 0) / 1e6;
+    _elapsedBeforePauseSec += stopwatchSec;
+    _playbackStopwatch?.stop();
+   
+    setState(() {
+      _isPlaying = false;
+      _isPaused = true;
+    });
+  }
+
+  void _resumeExercise() {
+    if (!mounted) return;
+   
+    _playbackTimer?.cancel();
+   
+    _pitchDetectionService.startDetection(_expectedNote);
+   
+    setState(() {
+      _isPlaying = true;
+      _isPaused = false;
+    });
+
+    if (_metronomeService.isEnabled) {
+      _metronomeService.start();
+    }
+
+    _scoreFuture.then((score) {
+      if (!mounted) return;
+      if (_expectedNote == null) {
+        _updateExpectedNote(score);
+      }
+    });
+
+    _playbackStopwatch?.stop();
+    _playbackStopwatch = Stopwatch()..start();
+
+    _scoreFuture.then((score) {
+      if (!mounted) return;
      
-     // Binary search for the current note
-     int left = 0;
-     int right = _notePositions.length - 1;
-     int result = 0;
-     
-     while (left <= right) {
-       int mid = (left + right) ~/ 2;
+      _playbackTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
        
-       if (_notePositions[mid] <= currentBeats) {
-         result = mid;
-         left = mid + 1;
-       } else {
-         right = mid - 1;
-       }
-     }
-     
-     return result;
-   }
+        _updatePlaybackState(score);
+      });
+    });
+  }
+
+  void _stopExercise() {
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+    _countdownTimer?.cancel();
+   
+    _pitchDetectionService.stopDetection();
+    _metronomeService.stop(immediate: true);
+   
+    setState(() {
+      _isPlaying = false;
+      _isPaused = false;
+      _currentTime = 0.0;
+      _showCountdown = false;
+      _reachedEnd = false;
+      _currentDetectedNote = null;
+      _expectedNote = null;
+      _isCorrect = false;
+      _pitchConfidence = 0.0;
+    });
+    
+    _elapsedBeforePauseSec = 0.0;
+    _playbackStopwatch?.stop();
+    _playbackStopwatch = null;
+   
+    _notePositions.clear();
+    _noteNames.clear();
+    _needsNoteListRebuild = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F5F5), // Light gray background to match screenshot
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF5F5F5),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Color(0xFF8B4511)),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(
+          widget.fileName, // Use fileName instead of level title
+          style: const TextStyle(
+            color: Colors.black,
+            fontSize: 18,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings, color: Color(0xFF8B4511)),
+            onPressed: () {
+              _showSettingsDialog();
+            },
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          // ============================================================================
+          // MAIN CONTENT - The exercise interface (music sheet, controls, etc.)
+          // ============================================================================
+          _buildBody(),
+         
+          // ============================================================================
+          // OVERLAYS - Countdown and metronome indicator
+          // ============================================================================
+          if (_showCountdown && _countdown > 0)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(32),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF8B4511).withValues(alpha: 0.7),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  _countdown.toString(),
+                  style: const TextStyle(
+                    color: Color(0xFFF5F5DD),
+                    fontSize: 72,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+         
+          // Debug Panel Overlay
+          DebugPanel(
+            isVisible: _showDebugPanel,
+            debugInfo: _debugInfo,
+            componentStats: _componentStats,
+            testWienerFilter: false,
+            testVoiceActivityDetector: false,
+            testPitchSmoother: false,
+            showComponentStats: false,
+            currentDetectedNote: _currentDetectedNote,
+            expectedNote: _expectedNote,
+            pitchConfidence: _pitchConfidence,
+            isVoiceDetected: _isVoiceDetected,
+          ),
+
+          // Metronome Flash Indicator
+          if (_metronomeService.isEnabled && _isPlaying)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 80),
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: _metronomeService.isFlashing 
+                      ? Colors.lightBlueAccent 
+                      : const Color(0xFFF5F5DD).withValues(alpha: 0.24),
+                  shape: BoxShape.circle,
+                  boxShadow: _metronomeService.isFlashing
+                      ? [
+                          BoxShadow(
+                            color: Colors.lightBlueAccent.withValues(alpha: 0.6),
+                            blurRadius: 12,
+                            spreadRadius: 2,
+                          ),
+                        ]
+                      : [],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
