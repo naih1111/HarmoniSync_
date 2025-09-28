@@ -320,7 +320,7 @@ class _ExerciseScreenState extends State<ExerciseScreen> with SingleTickerProvid
         initialIsMaleSinger: _isMaleSinger,
         initialMetronomeEnabled: _metronomeEnabled,
         initialMetronomeVolume: _metronomeService.getVolume(),
-        showDebugControls: true, // Enable debug controls
+        showDebugControls: false, // Hide debug controls
         onSettingsChanged: (bpm, isMaleSinger, debugSettings, metronomeEnabled, metronomeVolume) {
           setState(() {
             _bpm = bpm;

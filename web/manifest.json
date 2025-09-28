@@ -1,11 +1,11 @@
 {
-    "name": "pitch_detector",
-    "short_name": "pitch_detector",
+    "name": "HarmoniSync: Solfege Trainer",
+    "short_name": "HarmoniSync",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#000000",
     "theme_color": "#000000",
-    "description": "A new Flutter project.",
+    "description": "HarmoniSync: Solfege Trainer - A comprehensive solfege training application",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

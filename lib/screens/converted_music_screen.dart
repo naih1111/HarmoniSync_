@@ -282,6 +282,26 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
       _showCountdown = true;             // Show countdown overlay
     });
 
+    // Play one measure of metronome before starting countdown
+    if (_metronomeEnabled && _metronomeService.isInitialized) {
+      _scoreFuture.then((score) async {
+        _metronomeService.setBPM(_bpm.round());
+        _metronomeService.setTimeSignature(score.beats, score.beatType);
+        
+        // Wait for one measure to complete before starting countdown
+        await _metronomeService.playOneMeasure();
+        
+        // Start the actual countdown after metronome measure
+        _startActualCountdown();
+      });
+    } else {
+      // Start countdown immediately if metronome is disabled
+      _startActualCountdown();
+    }
+  }
+
+  /// Start the actual 3-2-1 countdown after metronome measure
+  void _startActualCountdown() {
     // Create countdown timer that counts down every second
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
@@ -310,7 +330,7 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
         initialIsMaleSinger: _isMaleSinger,
         initialMetronomeEnabled: _metronomeEnabled,
         initialMetronomeVolume: _metronomeService.getVolume(),
-        showDebugControls: true, // Enable debug controls
+        showDebugControls: false, // Hide debug controls
         onSettingsChanged: (bpm, isMaleSinger, debugSettings, metronomeEnabled, metronomeVolume) {
           setState(() {
             _bpm = bpm;
@@ -398,8 +418,8 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
       // Build note positions cache once
       _buildNotePositions(score);
      
-      // Start playback timer with 100ms interval (was 50ms)
-      _playbackTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      // Start playback timer with 50ms interval for better precision
+      _playbackTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
         if (!mounted) {
           timer.cancel();
           return;
@@ -991,10 +1011,9 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
                         _metronomeEnabled = !_metronomeEnabled;
                       });
                       _metronomeService.setEnabled(_metronomeEnabled);
-                      if (_metronomeEnabled) {
-                        _metronomeService.start();
-                      } else {
-                        _metronomeService.stop();
+                      // Don't start metronome here - it will start during countdown
+                      if (!_metronomeEnabled && _metronomeService.isPlaying) {
+                        _metronomeService.stop(immediate: true);
                       }
                     },
                     onSettings: _showSettingsDialog,
@@ -1074,8 +1093,9 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
       _isPaused = false;
     });
 
-    if (_metronomeService.isEnabled) {
-      _metronomeService.start();
+    // Resume metronome if enabled
+    if (_metronomeEnabled && _metronomeService.isInitialized) {
+      _metronomeService.resume();
     }
 
     _scoreFuture.then((score) {

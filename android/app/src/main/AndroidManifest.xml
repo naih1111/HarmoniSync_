@@ -8,7 +8,7 @@
                      tools:ignore="ScopedStorage" />
     
     <application
-        android:label="harmonisync_solfege_trainer"
+        android:label="HarmoniSync: Solfege Trainer"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

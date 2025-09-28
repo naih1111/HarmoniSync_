@@ -568,22 +568,25 @@ class _ProgressScreenState extends State<ProgressScreen> {
     final duration = session['duration_seconds'] as double;
     final playerName = session['player_name'] as String?;
 
+    // Check if this is a converted file (contains file extension) or built-in exercise
+    final isConvertedFile = level.contains('.') || level.contains('musicxml');
+    final iconColor = isConvertedFile ? const Color(0xFF8B4513) : _getScoreColor(percentage); // Brown for converted files
+    final backgroundColor = isConvertedFile ? const Color(0xFF8B4513).withOpacity(0.1) : _getScoreColor(percentage).withOpacity(0.1);
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(vertical: 8.0),
       leading: Container(
         width: 48,
         height: 48,
         decoration: BoxDecoration(
-          color: _getScoreColor(percentage).withOpacity(0.1),
+          color: backgroundColor,
           borderRadius: BorderRadius.circular(24),
         ),
         child: Center(
-          child: Text(
-            'L$level',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: _getScoreColor(percentage),
-            ),
+          child: Icon(
+            isConvertedFile ? Icons.library_music : Icons.music_note,
+            size: 24,
+            color: iconColor,
           ),
         ),
       ),

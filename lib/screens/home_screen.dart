@@ -103,16 +103,19 @@ class _HomeScreenState extends State<HomeScreen> {
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
+                                  strokeWidth: 4.0,
+                                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF543310)),
+                                  strokeCap: StrokeCap.round,
+                                  backgroundColor: Color(0x33543310),
                                 ),
                               )
                             : const Icon(Icons.play_arrow_rounded, size: 20),
                         label: Text(
                           _isLoading ? 'Loading...' : 'Start Practice',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w600,
                             fontSize: 16,
+                            color: _isLoading ? const Color(0xFF543310) : const Color(0xFFF5F5DD),
                           ),
                         ),
                         onPressed: _isLoading ? null : () async {
