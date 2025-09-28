@@ -19,7 +19,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'practice.db');
     return await openDatabase(
       path,
-      version: 3, // Increment version for complete table structure
+      version: 5, // Increment version to ensure migration
       onCreate: (db, version) async {
         // Create exercises table
         await db.execute('''
@@ -55,6 +55,7 @@ class DatabaseHelper {
             practice_date TEXT NOT NULL,
             practice_time TEXT NOT NULL,
             duration_seconds REAL NOT NULL CHECK (duration_seconds > 0),
+            player_name TEXT,
             created_at TEXT NOT NULL
           )
         ''');
@@ -108,6 +109,21 @@ class DatabaseHelper {
           
           // Add indexes
           await db.execute('CREATE INDEX idx_performances_exercises_id ON performances(exercises_id)');
+        }
+        
+        if (oldVersion < 4) {
+          // Add player_name column to existing practice_sessions table
+          await db.execute('ALTER TABLE practice_sessions ADD COLUMN player_name TEXT');
+        }
+        
+        if (oldVersion < 5) {
+          // Ensure player_name column exists (in case previous migration failed)
+          try {
+            await db.execute('ALTER TABLE practice_sessions ADD COLUMN player_name TEXT');
+          } catch (e) {
+            // Column might already exist, which is fine
+            print('Player name column might already exist: $e');
+          }
         }
       },
     );
@@ -322,4 +338,4 @@ class DatabaseHelper {
     
     return result.first;
   }
-} 
+}

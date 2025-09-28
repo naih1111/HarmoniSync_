@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
 
 /// Settings dialog for exercise configuration
-/// Handles BPM adjustment, singer gender settings, and debug controls
+/// Handles BPM adjustment, singer gender settings, metronome controls, and debug controls
 class ExerciseSettingsDialog extends StatefulWidget {
   final double initialBpm;
   final bool initialIsMaleSinger;
   final bool showDebugControls;
-  final Function(double bpm, bool isMaleSinger, Map<String, bool> debugSettings) onSettingsChanged;
+  final bool initialMetronomeEnabled;
+  final int initialMetronomeVolume;
+  final Function(double bpm, bool isMaleSinger, Map<String, bool> debugSettings, bool metronomeEnabled, int metronomeVolume) onSettingsChanged;
 
   const ExerciseSettingsDialog({
     super.key,
     required this.initialBpm,
     required this.initialIsMaleSinger,
     this.showDebugControls = false,
+    this.initialMetronomeEnabled = false,
+    this.initialMetronomeVolume = 70,
     required this.onSettingsChanged,
   });
 
@@ -23,6 +27,8 @@ class ExerciseSettingsDialog extends StatefulWidget {
 class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
   late double _tempBpm;
   late bool _tempIsMaleSinger;
+  late bool _tempMetronomeEnabled;
+  late int _tempMetronomeVolume;
   
   // Debug settings
   bool _showDebugPanel = false;
@@ -36,6 +42,8 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
     super.initState();
     _tempBpm = widget.initialBpm;
     _tempIsMaleSinger = widget.initialIsMaleSinger;
+    _tempMetronomeEnabled = widget.initialMetronomeEnabled;
+    _tempMetronomeVolume = widget.initialMetronomeVolume;
   }
 
   @override
@@ -59,6 +67,8 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
               _buildBpmSection(),
               const SizedBox(height: 24),
               _buildSingerGenderSection(),
+              const SizedBox(height: 24),
+              _buildMetronomeSection(),
               if (widget.showDebugControls) ...[
                 const SizedBox(height: 24),
                 _buildDebugSection(),
@@ -82,7 +92,7 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
                   'testPitchSmoother': _testPitchSmoother,
                   'showComponentStats': _showComponentStats,
                 };
-                widget.onSettingsChanged(_tempBpm, _tempIsMaleSinger, debugSettings);
+                widget.onSettingsChanged(_tempBpm, _tempIsMaleSinger, debugSettings, _tempMetronomeEnabled, _tempMetronomeVolume);
                 Navigator.pop(context);
               },
               style: ElevatedButton.styleFrom(
@@ -294,6 +304,143 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
       ],
     );
   }
+
+  /// Build the metronome controls section
+  Widget _buildMetronomeSection() {
+    return Column(
+      children: [
+        const Text(
+          'Metronome Settings',
+          style: TextStyle(
+            color: Color(0xFF543310),
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F4E1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFFAF8F6F),
+              width: 1.0,
+            ),
+          ),
+          child: Column(
+            children: [
+              // Metronome Enable/Disable
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _tempMetronomeEnabled ? Icons.music_note : Icons.music_off,
+                        color: _tempMetronomeEnabled 
+                            ? const Color(0xFFAF8F6F) 
+                            : const Color(0xFF74512D),
+                        size: 28,
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        _tempMetronomeEnabled ? 'Metronome On' : 'Metronome Off',
+                        style: const TextStyle(
+                          color: Color(0xFF543310),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Switch(
+                    value: _tempMetronomeEnabled,
+                    onChanged: (value) {
+                      setState(() {
+                        _tempMetronomeEnabled = value;
+                      });
+                    },
+                    activeColor: const Color(0xFFAF8F6F),
+                    inactiveThumbColor: const Color(0xFF74512D),
+                    inactiveTrackColor: const Color(0xFF74512D).withOpacity(0.3),
+                  ),
+                ],
+              ),
+              
+              if (_tempMetronomeEnabled) ...[
+                const SizedBox(height: 20),
+                const Divider(color: Color(0xFFAF8F6F)),
+                const SizedBox(height: 20),
+                
+                // Volume Control
+                Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Volume',
+                          style: TextStyle(
+                            color: Color(0xFF543310),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          '${_tempMetronomeVolume}%',
+                          style: const TextStyle(
+                            color: Color(0xFF543310),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        activeTrackColor: const Color(0xFFAF8F6F),
+                        inactiveTrackColor: const Color(0xFFAF8F6F).withOpacity(0.3),
+                        thumbColor: const Color(0xFF74512D),
+                        overlayColor: const Color(0xFF74512D).withOpacity(0.2),
+                        trackHeight: 4.0,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8.0),
+                      ),
+                      child: Slider(
+                        value: _tempMetronomeVolume.toDouble(),
+                        min: 0,
+                        max: 100,
+                        divisions: 20,
+                        onChanged: (value) {
+                          setState(() {
+                            _tempMetronomeVolume = value.round();
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _tempMetronomeEnabled
+              ? 'Metronome will help you keep time during exercises'
+              : 'Enable metronome for timing assistance',
+          style: TextStyle(
+            color: const Color(0xFF543310).withOpacity(0.7),
+            fontSize: 14,
+            fontStyle: FontStyle.italic,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
   /// Build the singer gender selection section
   Widget _buildSingerGenderSection() {
     return Column(

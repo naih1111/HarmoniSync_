@@ -47,6 +47,7 @@ dependencies:
   shared_preferences: ^2.5.3 # For persistent storage
   image: ^4.1.7 # For image processing and analysis
   lottie: ^2.7.0 # For Lottie animations
+  metronome: ^2.0.6 # For metronome functionality
 dev_dependencies:
   flutter_test:
     sdk: flutter

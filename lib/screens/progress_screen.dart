@@ -566,6 +566,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
     final date = session['practice_date'] as String;
     final time = session['practice_time'] as String;
     final duration = session['duration_seconds'] as double;
+    final playerName = session['player_name'] as String?;
 
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -590,7 +591,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         children: [
           Expanded(
             child: Text(
-              'Level $level Exercise',
+              'Level $level Exercise${playerName != null && playerName.isNotEmpty ? ' - $playerName' : ''}',
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 16,

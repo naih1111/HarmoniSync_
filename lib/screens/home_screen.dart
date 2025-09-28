@@ -103,25 +103,40 @@ class _HomeScreenState extends State<HomeScreen> {
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                                  strokeWidth: 2.5,
                                   valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFF5F5DD)),
                                 ),
                               )
-                            : const Icon(Icons.play_arrow_rounded),
-                        label: Text(_isLoading ? 'Loading...' : 'Start Practice'),
+                            : const Icon(Icons.play_arrow_rounded, size: 20),
+                        label: Text(
+                          _isLoading ? 'Loading...' : 'Start Practice',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
                         onPressed: _isLoading ? null : () async {
-                          setState(() {
-                            _isLoading = true;
-                          });
-                          
-                          // Add a small delay to show the loading animation
-                          await Future.delayed(const Duration(milliseconds: 800));
-                          
-                          if (mounted) {
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
-                            );
+                          try {
+                            setState(() {
+                              _isLoading = true;
+                            });
+                            
+                            // Add a small delay to show the loading animation
+                            await Future.delayed(const Duration(milliseconds: 600));
+                            
+                            if (mounted) {
+                              await Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(builder: (context) => const MainNavigationScreen()),
+                              );
+                            }
+                          } catch (e) {
+                            // Reset loading state if navigation fails
+                            if (mounted) {
+                              setState(() {
+                                _isLoading = false;
+                              });
+                            }
                           }
                         },
                       ),

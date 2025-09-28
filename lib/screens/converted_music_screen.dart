@@ -308,15 +308,19 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
       builder: (context) => ExerciseSettingsDialog(
         initialBpm: _bpm,
         initialIsMaleSinger: _isMaleSinger,
+        initialMetronomeEnabled: _metronomeEnabled,
+        initialMetronomeVolume: _metronomeService.getVolume(),
         showDebugControls: true, // Enable debug controls
-        onSettingsChanged: (bpm, isMaleSinger, debugSettings) {
+        onSettingsChanged: (bpm, isMaleSinger, debugSettings, metronomeEnabled, metronomeVolume) {
           setState(() {
             _bpm = bpm;
             _isMaleSinger = isMaleSinger;
+            _metronomeEnabled = metronomeEnabled;
             
             // Update services with new settings
             _pitchDetectionService.updateSingerGender(isMaleSinger);
             _pitchDetectionService.updateBPM(bpm);
+            _metronomeService.setVolume(metronomeVolume);
             
             // Update debug settings
             _pitchDetectionService.setDebugMode(
@@ -327,6 +331,11 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
             );
             
             if (_metronomeService.isEnabled) {
+              _metronomeService.stop();
+              if (metronomeEnabled) {
+                _metronomeService.start();
+              }
+            } else if (metronomeEnabled) {
               _metronomeService.start();
             }
             
@@ -615,62 +624,201 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
         ? ((correct / total) * 100).clamp(0, 100).toStringAsFixed(0)
         : '0';
 
-    // Save this practice session to the database for progress tracking
-    _savePracticeSession(correct, total, percent);
+    final TextEditingController nameController = TextEditingController();
 
     showDialog(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: false, // Prevent dismissing without saving
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF232B39),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text(
-            'Exercise Complete',
-            style: TextStyle(color: Color(0xFFF5F5DD), fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Score: $correct / $total',
-                style: const TextStyle(color: Color(0xFFF5F5DD), fontSize: 18),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '$percent%',
-                style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 22, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Close', style: TextStyle(color: Color(0xFFF5F5DD))),
+        return SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.lightBlueAccent,
-                foregroundColor: const Color(0xFF8B4511),
+            child: AlertDialog(
+              backgroundColor: const Color(0xFFF8F4E1), // Light beige background to match settings
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Center(
+                child: Text(
+                  'Exercise Complete!',
+                  style: TextStyle(
+                    color: Color(0xFF543310), // Dark brown text to match settings
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  ),
+                ),
               ),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _stopExercise();
-                _startCountdown();
-              },
-              child: const Text('Replay'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 8),
+                  // Score display container with border styling like settings
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F4E1),
+                      border: Border.all(color: const Color(0xFFAF8F6F), width: 2.0),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'Your Score',
+                          style: TextStyle(
+                            color: const Color(0xFF543310).withOpacity(0.7),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '$correct / $total',
+                          style: const TextStyle(
+                            color: Color(0xFF543310),
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$percent%',
+                          style: const TextStyle(
+                            color: Color(0xFFAF8F6F), // Brown accent color
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Name input field with settings-style theming
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Player Name',
+                        style: TextStyle(
+                          color: Color(0xFF543310),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFFAF8F6F).withOpacity(0.5),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: TextField(
+                          controller: nameController,
+                          style: const TextStyle(
+                            color: Color(0xFF543310),
+                            fontSize: 16,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'Enter your name',
+                            hintStyle: TextStyle(
+                              color: const Color(0xFF543310).withOpacity(0.5),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                // Cancel/Close button with settings theme
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Color(0xFF543310),
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                // Save & Close button
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAF8F6F).withOpacity(0.8),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('Please enter your name'),
+                          backgroundColor: const Color(0xFF8B4513), // Brown error color
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      return;
+                    }
+                    _savePracticeSession(correct, total, percent, name);
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Save & Close'),
+                ),
+                // Save & Replay button
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAF8F6F), // Primary brown color
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () {
+                    final name = nameController.text.trim();
+                    if (name.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('Please enter your name'),
+                          backgroundColor: const Color(0xFF8B4513), // Brown error color
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      return;
+                    }
+                    _savePracticeSession(correct, total, percent, name);
+                    Navigator.of(context).pop();
+                    _stopExercise();
+                    _startCountdown();
+                  },
+                  child: const Text('Save & Replay'),
+                ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );
   }
 
   /// Save the completed practice session to the database
-  Future<void> _savePracticeSession(int correctNotes, int totalNotes, String percentage) async {
+  Future<void> _savePracticeSession(int correctNotes, int totalNotes, String percentage, String playerName) async {
     try {
+      print(' Saving practice session...');
       final now = DateTime.now();
       final date = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       final time = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
@@ -684,13 +832,39 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
         'practice_date': date,
         'practice_time': time,
         'duration_seconds': duration,
+        'player_name': playerName,
         'created_at': now.toIso8601String(),
       };
 
+      print('🎯 Session data: $session');
       final dbHelper = DatabaseHelper();
-      await dbHelper.insertPracticeSession(session);
+      final id = await dbHelper.insertPracticeSession(session);
+      print('🎯 Practice session saved with ID: $id');
+      
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Practice session saved successfully!'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
+      print('❌ Error saving practice session: $e');
       debugPrint('Error saving practice session: $e');
+      
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save practice session: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
