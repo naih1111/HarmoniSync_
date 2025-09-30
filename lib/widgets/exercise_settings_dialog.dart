@@ -48,58 +48,81 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: AlertDialog(
-          backgroundColor: const Color(0xFFF8F4E1),
-          title: const Center(
-            child: Text(
+    return Dialog(
+      backgroundColor: const Color(0xFFF8F4E1),
+      child: Container(
+        width: 400, // Fixed width
+        height: MediaQuery.of(context).size.height * 0.85, // Use 85% of screen height
+        padding: const EdgeInsets.all(14), // Reduced padding for more content space
+        child: Column(
+          children: [
+            // Title
+            const Text(
               'Exercise Settings',
-              style: TextStyle(color: Color(0xFF543310)),
+              style: TextStyle(
+                color: Color(0xFF543310),
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildBpmSection(),
-              const SizedBox(height: 24),
-              _buildSingerGenderSection(),
-              const SizedBox(height: 24),
-              _buildMetronomeSection(),
-              if (widget.showDebugControls) ...[
-                const SizedBox(height: 24),
-                _buildDebugSection(),
+            const SizedBox(height: 10), // Reduced from 24
+            
+            // Scrollable content area
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _buildBpmSection(),
+                    const SizedBox(height: 10), // Reduced from 24
+                    _buildSingerGenderSection(),
+                    const SizedBox(height: 10), // Reduced from 24
+                    _buildMetronomeSection(),
+                    if (widget.showDebugControls) ...[
+                      const SizedBox(height: 10), // Reduced from 24
+                      _buildDebugSection(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 8), // Reduced from 16
+            
+            // Action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), // Reduced button padding
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Color(0xFF543310)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    final debugSettings = {
+                      'showDebugPanel': _showDebugPanel,
+                      'testWienerFilter': _testWienerFilter,
+                      'testVoiceActivityDetector': _testVoiceActivityDetector,
+                      'testPitchSmoother': _testPitchSmoother,
+                      'showComponentStats': _showComponentStats,
+                    };
+                    widget.onSettingsChanged(_tempBpm, _tempIsMaleSinger, debugSettings, _tempMetronomeEnabled, _tempMetronomeVolume);
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAF8F6F),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), // Reduced button padding
+                  ),
+                  child: const Text('Done'),
+                ),
               ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Color(0xFF543310)),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final debugSettings = {
-                  'showDebugPanel': _showDebugPanel,
-                  'testWienerFilter': _testWienerFilter,
-                  'testVoiceActivityDetector': _testVoiceActivityDetector,
-                  'testPitchSmoother': _testPitchSmoother,
-                  'showComponentStats': _showComponentStats,
-                };
-                widget.onSettingsChanged(_tempBpm, _tempIsMaleSinger, debugSettings, _tempMetronomeEnabled, _tempMetronomeVolume);
-                Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAF8F6F),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Done'),
             ),
           ],
         ),
@@ -111,10 +134,10 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
   Widget _buildBpmSection() {
     return Column(
       children: [
-        const SizedBox(height: 14),
+        const SizedBox(height: 8), // Reduced from 14
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8), // Reduced vertical padding from 10 to 8
           decoration: BoxDecoration(
             color: const Color(0xFFF8F4E1),
             border: Border.all(color: const Color(0xFFAF8F6F), width: 1.0),
@@ -231,9 +254,9 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8), // Reduced from 12
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(10), // Reduced padding from 16 to 10
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.1),
             borderRadius: BorderRadius.circular(8),
@@ -317,9 +340,9 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8), // Reduced from 12
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(8), // Reduced padding from 16 to 8
           decoration: BoxDecoration(
             color: const Color(0xFFF8F4E1),
             borderRadius: BorderRadius.circular(8),
@@ -367,6 +390,7 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
                   ),
                 ],
               ),
+              
               
               if (_tempMetronomeEnabled) ...[
                 const SizedBox(height: 20),
@@ -426,16 +450,21 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        Text(
-          _tempMetronomeEnabled
-              ? 'Metronome will help you keep time during exercises'
-              : 'Enable metronome for timing assistance',
-          style: TextStyle(
-            color: const Color(0xFF543310).withOpacity(0.7),
-            fontSize: 14,
-            fontStyle: FontStyle.italic,
+        SizedBox(
+          height: 40, // Fixed height to prevent resizing
+          child: Center(
+            child: Text(
+              _tempMetronomeEnabled
+                  ? 'Metronome will help you keep time during exercises'
+                  : 'Enable metronome for timing assistance',
+              style: TextStyle(
+                color: const Color(0xFF543310).withOpacity(0.7),
+                fontSize: 14,
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ),
-          textAlign: TextAlign.center,
         ),
       ],
     );
@@ -456,7 +485,7 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
         const SizedBox(height: 12),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8), // Reduced vertical padding from 10 to 8
           decoration: BoxDecoration(
             color: const Color(0xFFF8F4E1),
             borderRadius: BorderRadius.circular(8),
@@ -503,16 +532,21 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
           ),
         ),
         const SizedBox(height: 12),
-        Text(
-          _tempIsMaleSinger
-              ? 'Optimized for male vocal range (80-400 Hz)'
-              : 'Optimized for female vocal range (150-800 Hz)',
-          style: TextStyle(
-            color: const Color(0xFF543310).withOpacity(0.7),
-            fontSize: 14,
-            fontStyle: FontStyle.italic,
+        SizedBox(
+          height: 40, // Fixed height to prevent resizing
+          child: Center(
+            child: Text(
+              _tempIsMaleSinger
+                  ? 'Optimized for male vocal range (80-400 Hz)'
+                  : 'Optimized for female vocal range (150-800 Hz)',
+              style: TextStyle(
+                color: const Color(0xFF543310).withOpacity(0.7),
+                fontSize: 14,
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ),
-          textAlign: TextAlign.center,
         ),
       ],
     );
