@@ -41,7 +41,7 @@ class PracticeScreen extends StatelessWidget {
                 height: 150, // Fixed height for square cards
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: 5, // Number of Level 1 exercises
+                  itemCount: MusicService.getExerciseCount('1'), // Dynamic count based on available exercises
                   itemBuilder: (context, index) {
                     return Container(
                       width: 150, // Square width
@@ -49,7 +49,7 @@ class PracticeScreen extends StatelessWidget {
                       child: Card(
                         color: const Color(0xFFC7AD7F),
                         child: InkWell(
-                          onTap: () => _navigateToExercise(context, '1'),
+                          onTap: () => _navigateToExercise(context, '1', index),
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
@@ -57,7 +57,7 @@ class PracticeScreen extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SvgPicture.asset(
-                                  'assets/sheet${index + 1}.svg',
+                                  'assets/sheet${(index % 5) + 1}.svg', // Cycle through available sheet icons
                                   width: 60,
                                   height: 60,
                                 ),
@@ -73,7 +73,7 @@ class PracticeScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Level 1',
+                                  'Level ${index + 1}',
                                   style: TextStyle(
                                     color: Color(0xFFF5F5DD).withOpacity(0.7),
                                     fontSize: 13,
@@ -97,7 +97,7 @@ class PracticeScreen extends StatelessWidget {
                 height: 150, // Fixed height for square cards
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: 5, // Number of Level 2 exercises
+                  itemCount: MusicService.getExerciseCount('2'), // Dynamic count based on available exercises
                   itemBuilder: (context, index) {
                     return Container(
                       width: 150, // Square width
@@ -105,7 +105,7 @@ class PracticeScreen extends StatelessWidget {
                       child: Card(
                         color: const Color(0xFFCC9767),
                         child: InkWell(
-                          onTap: () => _navigateToExercise(context, '2'),
+                          onTap: () => _navigateToExercise(context, '2', index),
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
@@ -113,7 +113,7 @@ class PracticeScreen extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SvgPicture.asset(
-                                  'assets/sheet${index + 1}.svg',
+                                  'assets/sheet${(index % 5) + 1}.svg', // Cycle through available sheet icons
                                   width: 60,
                                   height: 60,
                                 ),
@@ -129,7 +129,7 @@ class PracticeScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Level 2',
+                                  'Level ${index + 1}',
                                   style: TextStyle(
                                     color: Color(0xFFF5F5DD).withOpacity(0.7),
                                     fontSize: 13,
@@ -153,7 +153,7 @@ class PracticeScreen extends StatelessWidget {
                 height: 150, // Fixed height for square cards
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: 5, // Number of Level 3 exercises
+                  itemCount: MusicService.getExerciseCount('3'), // Dynamic count based on available exercises
                   itemBuilder: (context, index) {
                     return Container(
                       width: 150, // Square width
@@ -161,7 +161,7 @@ class PracticeScreen extends StatelessWidget {
                       child: Card(
                         color: const Color(0xFFA57A5A),
                         child: InkWell(
-                          onTap: () => _navigateToExercise(context, '3'),
+                          onTap: () => _navigateToExercise(context, '3', index),
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
@@ -169,7 +169,7 @@ class PracticeScreen extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SvgPicture.asset(
-                                  'assets/sheet${index + 1}.svg',
+                                  'assets/sheet${(index % 5) + 1}.svg', // Cycle through available sheet icons
                                   width: 60,
                                   height: 60,
                                 ),
@@ -185,7 +185,7 @@ class PracticeScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Level 3',
+                                  'Level ${index + 1}',
                                   style: TextStyle(
                                     color: Color(0xFFF5F5DD).withOpacity(0.7),
                                     fontSize: 13,
@@ -207,11 +207,11 @@ class PracticeScreen extends StatelessWidget {
     );
   }
 
-  void _navigateToExercise(BuildContext context, String level) {
+  void _navigateToExercise(BuildContext context, String level, int exerciseIndex) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ExerciseScreen(level: level),
+        builder: (context) => ExerciseScreen(level: level, exerciseIndex: exerciseIndex),
       ),
     );
   }

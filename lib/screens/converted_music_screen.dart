@@ -447,7 +447,7 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
     }
    
     // Calculate total beats up to current time
-    final double metronomeBeatUnitSec = (60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0));
+    final double metronomeBeatUnitSec = (60.0 / _bpm) * ((_timeSigBeatType?.toDouble() ?? 4.0) / 4.0);
     final double currentBeats = _currentTime / metronomeBeatUnitSec;
 
     // End-of-sheet handling
@@ -520,20 +520,33 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
 
   // Helper method to get note duration in beats
   double _getNoteDuration(Note note) {
+    double baseDuration;
     switch (note.type) {
       case 'whole':
-        return 4.0;
+        baseDuration = 4.0;
+        break;
       case 'half':
-        return 2.0;
+        baseDuration = 2.0;
+        break;
       case 'quarter':
-        return 1.0;
+        baseDuration = 1.0;
+        break;
       case 'eighth':
-        return 0.5;
+        baseDuration = 0.5;
+        break;
       case '16th':
-        return 0.25;
+        baseDuration = 0.25;
+        break;
       default:
-        return 1.0; // Default to quarter note duration
+        baseDuration = 1.0; // Default to quarter note duration
     }
+    
+    // Apply dot multiplier if note is dotted (dot adds half the note's value)
+    if (note.hasDot) {
+      baseDuration *= 1.5;
+    }
+    
+    return baseDuration;
   }
 
   void _scrollToCurrentNote() {
@@ -583,7 +596,7 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
   double _calculateScoreDurationSeconds(Score score) {
     const double secondsPerMinute = 60.0;
     final int beatType = score.beatType;
-    final double beatUnitSeconds = (secondsPerMinute / _bpm) * (4.0 / beatType);
+    final double beatUnitSeconds = (secondsPerMinute / _bpm) * (beatType / 4.0);
     double totalBeats = 0.0;
     for (final measure in score.measures) {
       for (final note in measure.notes) {
@@ -627,8 +640,8 @@ class _ConvertedMusicScreenState extends State<ConvertedMusicScreen> with Single
   /// Trigger metronome click (delegated to service)
   void _triggerMetronome({required bool downbeat}) {
     _metronomeService.updateTiming(
-      _currentTime / ((60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0))),
-      (60.0 / _bpm) * (4.0 / (_timeSigBeatType?.toDouble() ?? 4.0)),
+      _currentTime / ((60.0 / _bpm) * ((_timeSigBeatType?.toDouble() ?? 4.0) / 4.0)),
+      (60.0 / _bpm) * ((_timeSigBeatType?.toDouble() ?? 4.0) / 4.0),
       _lastMeasurePosition,
     );
   }

@@ -13,6 +13,7 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'dart:ui';
 import '../services/music_service.dart';
+import '../services/server_connection_service.dart';
 import '../widgets/music_sheet.dart';
 import 'converted_music_screen.dart';
 
@@ -31,18 +32,9 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   static const Color _brandPrimary = Color(0xFF8B4511);
   static const Color _brandAccent = Color(0xFF424242);
   
-  // Conversion settings - Choose the appropriate URL based on your setup:
-  // For Android Emulator: 'http://10.0.2.2:5000'
-  // For Physical Device: 'http://192.168.100.51:5000' (your computer's IP)
-  // For Desktop/Web: 'http://localhost:5000'
-  // For Online Service: 'https://pdf-to-musicxml-converter.onrender.com'
+  // Use the global server connection service
+  final ServerConnectionService _serverService = ServerConnectionService();
   
-  // Available server options:
-   static const String _localServerUrl = 'http://192.168.1.8:5000'; // Keep offline option
-  static const String _onlineServerUrl = 'https://pdf-to-musicxml-converter.onrender.com';
-  
-  // Current active server URL - switch between _localServerUrl and _onlineServerUrl
-  static const String _serverUrl = _onlineServerUrl;
   bool _isConverting = false; // Track conversion status
   bool _isPickingFile = false; // Track file picking status
   bool _isOpeningFile = false; // Track file opening status
@@ -54,10 +46,11 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
   // Temp buffer (not shown anymore)
   final Map<String, String> _conversionResults = {};
 
-  // Server status
+  // Server status - now managed by global service
   bool _serverOnline = false;
   String? _serverStatusMessage;
-  Timer? _serverStatusTimer;
+  StreamSubscription<bool>? _connectionStatusSubscription;
+  StreamSubscription<String?>? _statusMessageSubscription;
 
   // Loader animation
   late final AnimationController _loaderController;
@@ -70,17 +63,34 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       duration: const Duration(milliseconds: 1200),
     )..repeat();
     _loadConvertedItems(); // Add this line
-    // Initial server status check and periodic updates
-    _checkServerStatus();
-    _serverStatusTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      _checkServerStatus();
+    
+    // Subscribe to global server connection service
+    _connectionStatusSubscription = _serverService.connectionStatus.listen((isOnline) {
+      if (mounted) {
+        setState(() {
+          _serverOnline = isOnline;
+        });
+      }
     });
+    
+    _statusMessageSubscription = _serverService.statusMessage.listen((message) {
+      if (mounted) {
+        setState(() {
+          _serverStatusMessage = message;
+        });
+      }
+    });
+    
+    // Get initial status
+    _serverOnline = _serverService.isConnected;
+    _serverStatusMessage = _serverService.currentStatusMessage;
   }
 
   @override
   void dispose() {
     _loaderController.dispose();
-    _serverStatusTimer?.cancel();
+    _connectionStatusSubscription?.cancel();
+    _statusMessageSubscription?.cancel();
     super.dispose();
   }
 
@@ -524,7 +534,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       }
 
       // Proceed with conversion
-      final uri = Uri.parse('$_serverUrl/convert');
+      final uri = Uri.parse('${_serverService.serverUrl}/convert');
       final request = http.MultipartRequest('POST', uri);
       
       // Add file with proper headers
@@ -667,7 +677,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
       try {
         final resp = await http
             .get(
-              Uri.parse('$_serverUrl/health'),
+              Uri.parse('${_serverService.serverUrl}/health'),
               headers: {'Content-Type': 'application/json'},
             )
             .timeout(const Duration(seconds: 25));
@@ -692,7 +702,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Server connection failed: $e\nPlease check if the server is running at $_serverUrl'),
+                content: Text('Server connection failed: $e\nPlease check if the server is running at ${_serverService.serverUrl}'),
                 backgroundColor: Colors.red,
                 duration: const Duration(seconds: 6),
               ),
@@ -723,14 +733,14 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Current URL: $_serverUrl'),
+            Text('Current URL: ${_serverService.serverUrl}'),
             const SizedBox(height: 16),
             const Text('Available URLs:'),
             const Text('• http://192.168.100.51:5000 (Physical Device)'),
             const Text('• http://10.0.2.2:5000 (Android Emulator)'),
             const Text('• http://localhost:5000 (Desktop/Web)'),
             const SizedBox(height: 16),
-            const Text('Update _serverUrl in SheetConverterScreen to change it.'),
+            const Text('Server URL is now managed globally and persists across screens.'),
           ],
         ),
         actions: [
@@ -1333,55 +1343,7 @@ class _SheetConverterScreenState extends State<SheetConverterScreen> with Single
 
   /// Test connection to the Flask server
   Future<void> _testServerConnection() async {
-    await _checkServerStatus(showSnack: true);
-  }
-
-  /// Check server status (used on init and periodic). Optionally show snack.
-  Future<void> _checkServerStatus({bool showSnack = false}) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('$_serverUrl/health'),
-            headers: {'Content-Type': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 25));
-      final online = response.statusCode == 200;
-      setState(() {
-        _serverOnline = online;
-        _serverStatusMessage = online ? 'Online' : 'Offline';
-      });
-      if (showSnack && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(online
-                ? 'Server is online.'
-                : 'Server responded with status: ${response.statusCode}\nResponse: ${response.body}'),
-            backgroundColor: online ? Colors.green : Colors.orange,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() {
-        _serverOnline = false;
-        _serverStatusMessage = 'Offline';
-      });
-      if (showSnack && mounted) {
-        String errorMsg = 'Cannot connect to server: $e';
-        if (e.toString().contains('TimeoutException')) {
-          errorMsg = 'Connection timed out. Please check if the server is running at $_serverUrl';
-        } else if (e.toString().contains('SocketException')) {
-          errorMsg = 'Network error. Please check your connection and server URL: $_serverUrl';
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMsg),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    }
+    await _serverService.checkServerStatus(showSnack: true, context: context);
   }
 
   @override

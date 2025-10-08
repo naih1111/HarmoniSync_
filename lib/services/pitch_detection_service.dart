@@ -172,7 +172,7 @@ class PitchDetectionService {
           return;
         }
         
-        final note = NoteUtils.frequencyToNote(pitchHz);
+        final note = NoteUtils.getGenderAwareNote(pitchHz, isMale: _isMaleSinger);
         final confidence = _calculateConfidence(pitchHz);
         
         _updateDebugInfo();
@@ -262,7 +262,9 @@ class PitchDetectionService {
       _updateComponentStats();
     }
     
-    final bool isCorrect = expectedNote != null && note == expectedNote;
+    // Use gender-aware note comparison for better accuracy
+    final bool isCorrect = expectedNote != null && 
+        NoteUtils.isEquivalentNote(note, expectedNote, isMale: _isMaleSinger);
     onNoteDetected?.call(note, confidence, isCorrect);
   }
   

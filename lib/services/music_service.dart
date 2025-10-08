@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:xml/xml.dart';
+import 'package:archive/archive.dart';
 
 class Note {
   final String step;
@@ -15,6 +17,7 @@ class Note {
   final int? alter; // for sharps and flats
   final String? beamValue; // value for beam (begin, continue, end)
   final int? beamNumber; // beam number attribute
+  final double? defaultX; // MusicXML default-x positioning
   
   // Properties to store slur positions
   double? slurStartX;
@@ -35,6 +38,7 @@ class Note {
     this.alter,
     this.beamValue,
     this.beamNumber,
+    this.defaultX,
     this.slurStartX,
     this.slurStartY,
     this.slurEndX,
@@ -42,6 +46,9 @@ class Note {
   });
 
   factory Note.fromXmlElement(XmlElement noteElem) {
+    // Parse default-x positioning from MusicXML
+    final defaultX = double.tryParse(noteElem.getAttribute('default-x') ?? '');
+    
     // Check for grace notes and skip them if present
     if (noteElem.getElement('grace') != null) {
       return Note(
@@ -50,6 +57,7 @@ class Note {
         duration: 0,
         isRest: true,
         type: 'grace',
+        defaultX: defaultX,
       );
     }
 
@@ -128,6 +136,7 @@ class Note {
         stemDirection: 'up',
         slurs: slurs,
         hasDot: hasDot,
+        defaultX: defaultX,
       );
     }
 
@@ -145,6 +154,7 @@ class Note {
         stemDirection: stemDirection,
         slurs: slurs,
         hasDot: hasDot,
+        defaultX: defaultX,
       );
     }
 
@@ -182,6 +192,7 @@ class Note {
       alter: alter,
       beamValue: beamValue,
       beamNumber: beamNumber,
+      defaultX: defaultX,
     );
   }
 }
@@ -258,10 +269,33 @@ class Score {
 }
 
 class MusicService {
-  static Future<Score> loadMusicXML(String level) async {
+  static Future<Score> loadMusicXML(String level, {int exerciseIndex = 0}) async {
     try {
-      // Load the MusicXML file from assets
-      final String xmlString = await rootBundle.loadString('assets/$level.musicxml');
+      String xmlString;
+      
+      final exerciseFiles = getExerciseFiles(level);
+      if (exerciseIndex >= exerciseFiles.length) {
+        throw Exception('Exercise index $exerciseIndex out of range for level $level');
+      }
+      
+      final fileName = exerciseFiles[exerciseIndex];
+      
+      // Construct the correct asset path based on level
+      String assetPath;
+      if (level == '1') {
+        assetPath = 'assets/lvl1 mxl/$fileName';
+      } else {
+        assetPath = 'assets/lvl $level mxl/$fileName';
+      }
+      
+      if (fileName.endsWith('.mxl')) {
+        // Handle MXL files (compressed MusicXML)
+        xmlString = await _loadMXLFile(assetPath);
+      } else {
+        // Handle regular MusicXML files
+        xmlString = await rootBundle.loadString(assetPath);
+      }
+      
       // Parse the MusicXML string into a Score object
       final Score score = Score.fromXML(xmlString);
       return score;
@@ -271,20 +305,116 @@ class MusicService {
     }
   }
 
+  static Future<String> _loadMXLFile(String assetPath) async {
+    try {
+      // Load the MXL file as bytes
+      final ByteData data = await rootBundle.load(assetPath);
+      final Uint8List bytes = data.buffer.asUint8List();
+      
+      // Decompress the MXL file (it's a ZIP archive)
+      final Archive archive = ZipDecoder().decodeBytes(bytes);
+      
+      // Look for the main MusicXML file in the archive
+      // MXL files typically contain a META-INF/container.xml that points to the main file
+      // But for simplicity, we'll look for common patterns
+      ArchiveFile? musicXmlFile;
+      
+      // First, try to find container.xml to get the proper root file
+      final containerFile = archive.files.firstWhere(
+        (file) => file.name.toLowerCase().endsWith('container.xml'),
+        orElse: () => throw Exception('No container.xml found in MXL file'),
+      );
+      
+      if (containerFile.content != null) {
+        final containerXml = utf8.decode(containerFile.content as List<int>);
+        final containerDoc = XmlDocument.parse(containerXml);
+        
+        // Find the rootfile element
+        final rootFileElement = containerDoc.findAllElements('rootfile').first;
+        final rootFilePath = rootFileElement.getAttribute('full-path');
+        
+        if (rootFilePath != null) {
+          musicXmlFile = archive.files.firstWhere(
+            (file) => file.name == rootFilePath,
+            orElse: () => throw Exception('Root file $rootFilePath not found in MXL archive'),
+          );
+        }
+      }
+      
+      // Fallback: look for any .xml file if container approach fails
+      if (musicXmlFile == null) {
+        musicXmlFile = archive.files.firstWhere(
+          (file) => file.name.toLowerCase().endsWith('.xml') && 
+                   !file.name.toLowerCase().contains('container'),
+          orElse: () => throw Exception('No MusicXML file found in MXL archive'),
+        );
+      }
+      
+      if (musicXmlFile.content == null) {
+        throw Exception('MusicXML file content is null');
+      }
+      
+      // Convert the content to string
+      return utf8.decode(musicXmlFile.content as List<int>);
+    } catch (e) {
+      print('Error loading MXL file $assetPath: $e');
+      rethrow;
+    }
+  }
+
   static List<String> getAvailableLevels() {
     return ['1', '2', '3'];
   }
 
-  static String getLevelTitle(String level) {
+  static String getLevelTitle(String level, {int exerciseIndex = 0}) {
+    final exerciseNumber = exerciseIndex + 1;
     switch (level) {
       case '1':
-        return 'Level 1 Exercise';
+        return 'Level 1 - Exercise $exerciseNumber';
       case '2':
-        return 'Level 2 Exercise';
+        return 'Level 2 - Exercise $exerciseNumber';
       case '3':
-        return 'Level 3 Exercise';
+        return 'Level 3 - Exercise $exerciseNumber';
       default:
         return 'Unknown Level';
     }
   }
-} 
+
+  static List<String> getExerciseFiles(String level) {
+    switch (level) {
+      case '1':
+        return [
+          '1.musicxml',  // Original file first
+          '2.2.musicxml',
+          '2.3.musicxml',
+          '2.4.musicxml',
+          '2.5.musicxml',
+          '2.6.musicxml',
+        ];
+      case '2':
+        return [
+          '2.musicxml',  // Original file first
+          '2.14.musicxml',
+          '2.15.musicxml',
+          '2.21.musicxml',
+          '2.23.musicxml',
+          '2.24.musicxml',
+        ];
+      case '3':
+        return [
+          '3.musicxml',  // Original file first
+          '13.57.musicxml',
+          '13.59.musicxml',
+          '13.60.musicxml',
+          '13.61.musicxml',
+          '13.65.musicxml',
+        ];
+      default:
+        return [];
+    }
+  }
+
+  static int getExerciseCount(String level) {
+    return getExerciseFiles(level).length;
+  }
+}

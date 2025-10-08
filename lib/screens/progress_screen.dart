@@ -594,7 +594,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
         children: [
           Expanded(
             child: Text(
-              'Level $level Exercise${playerName != null && playerName.isNotEmpty ? ' - $playerName' : ''}',
+              '${playerName != null && playerName.isNotEmpty ? '$playerName - ' : ''}Level $level Exercise',
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 16,

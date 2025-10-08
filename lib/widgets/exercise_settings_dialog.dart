@@ -533,15 +533,15 @@ class _ExerciseSettingsDialogState extends State<ExerciseSettingsDialog> {
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 40, // Fixed height to prevent resizing
+          height: 60, // Increased height to accommodate two lines
           child: Center(
             child: Text(
               _tempIsMaleSinger
-                  ? 'Optimized for male vocal range (80-400 Hz)'
-                  : 'Optimized for female vocal range (150-800 Hz)',
+                  ? 'Optimized for male vocal range (80-450 Hz)\nPrefers lower octave detection (C2-C4)'
+                  : 'Optimized for female vocal range (130-900 Hz)\nPrefers higher octave detection (C3-C6)',
               style: TextStyle(
                 color: const Color(0xFF543310).withOpacity(0.7),
-                fontSize: 14,
+                fontSize: 13,
                 fontStyle: FontStyle.italic,
               ),
               textAlign: TextAlign.center,

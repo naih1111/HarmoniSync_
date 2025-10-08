@@ -17,6 +17,7 @@ class MetronomeService {
   int _bpm = 120;
   int _volume = 50;
   int _timeSignature = 4;
+  int _beatType = 4;
   
   // Callbacks for UI updates
   Function(bool isFlashing)? onFlashUpdate;
@@ -65,6 +66,7 @@ class MetronomeService {
   /// Set time signature for metronome beats
   void setTimeSignature(int beats, int beatType) {
     _timeSignature = beats;
+    _beatType = beatType;
     if (_isInitialized) {
       _metronome.setTimeSignature(beats);
     }
@@ -148,6 +150,9 @@ class MetronomeService {
   
   /// Get current time signature
   int getTimeSignature() => _timeSignature;
+  
+  /// Get current beat type
+  int getBeatType() => _beatType;
   
   /// Check if metronome is enabled
   bool get isEnabled => _isEnabled;

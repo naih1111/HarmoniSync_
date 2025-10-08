@@ -2,8 +2,14 @@ import 'package:flutter/material.dart';
 //import 'screens/pitch_detector_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'services/server_connection_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize the global server connection service
+  await ServerConnectionService().initialize();
+  
   //runApp(const MaterialApp(home: PitchDetectorScreen()));
   runApp(const MyApp());
 }

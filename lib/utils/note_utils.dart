@@ -30,7 +30,7 @@ class NoteUtils {
   static const int _a4MidiNote = 69; // MIDI note number for A4
 
   /// Convert frequency to musical note with enhanced accuracy
-  static String frequencyToNote(double frequency) {
+  static String frequencyToNote(double frequency, {String? gender}) {
     if (frequency <= 0) return 'C4'; // Default fallback
     
     // Use MIDI note calculation for more accurate conversion
@@ -46,7 +46,12 @@ class NoteUtils {
     }
     
     final noteName = _noteNames[noteIndex];
-    final noteString = '$noteName$octave';
+    var noteString = '$noteName$octave';
+    
+    // Apply gender-aware octave adjustment
+    if (gender != null) {
+      noteString = _applyGenderAwareMapping(noteString, gender, frequency);
+    }
     
     // Validate that the note exists in our frequency map
     if (_noteFrequencies.containsKey(noteString)) {
@@ -55,6 +60,41 @@ class NoteUtils {
     
     // Fallback to closest note in our map
     return _findClosestNote(frequency);
+  }
+
+  /// Apply gender-aware note mapping to improve octave detection
+  static String _applyGenderAwareMapping(String note, String gender, double frequency) {
+    final noteName = getNoteName(note);
+    final octave = getOctave(note);
+    
+    // For male singers, prefer lower octave representations when ambiguous
+    if (gender.toLowerCase() == 'male') {
+      // If frequency is in the lower male range (80-200 Hz), prefer octaves 2-3
+      if (frequency >= 80 && frequency <= 200) {
+        if (octave > 3) {
+          return '$noteName${octave - 1}';
+        }
+      }
+      // If frequency is in mid-male range (200-400 Hz), prefer octaves 3-4
+      else if (frequency > 200 && frequency <= 400) {
+        if (octave > 4) {
+          return '$noteName${octave - 1}';
+        }
+      }
+    }
+    
+    // For female singers, minimize octave transposition - they can hit the actual notes
+    else if (gender.toLowerCase() == 'female') {
+      // Only adjust if the detected octave is clearly outside typical female range
+      // Female voices can typically reach C4-C6 accurately
+      if (octave < 3 && frequency > 200) {
+        // Only transpose up if frequency suggests it should be higher
+        return '$noteName${octave + 1}';
+      }
+      // Avoid unnecessary octave adjustments - trust the original detection
+    }
+    
+    return note; // Return original if no adjustment needed
   }
 
   /// Find the closest note using the frequency map
@@ -94,6 +134,40 @@ class NoteUtils {
     return getNoteName(note1) == getNoteName(note2);
   }
 
+  /// Check if two notes are equivalent considering gender-aware octave differences
+  /// This allows for octave transposition while maintaining musical correctness
+  /// Female singers get stricter matching, male singers get more octave flexibility
+  static bool isEquivalentNote(String detectedNote, String expectedNote, {bool isMale = true}) {
+    // First check if they're exactly the same
+    if (detectedNote == expectedNote) return true;
+    
+    // Check if they're the same note name (ignoring octave)
+    if (!isSameNote(detectedNote, expectedNote)) return false;
+    
+    // Get octaves for both notes
+    final detectedOctave = getOctave(detectedNote);
+    final expectedOctave = getOctave(expectedNote);
+    final octaveDiff = (detectedOctave - expectedOctave).abs();
+    
+    // For female singers: prioritize exact matching with minimal octave flexibility
+    if (!isMale) {
+      // Allow only 1 octave difference for females since they can hit the actual notes
+      return octaveDiff <= 1;
+    }
+    
+    // For male singers: provide more octave flexibility due to lower vocal range
+    else {
+      // Get gender-specific optimal octave range
+      final optimalRange = getOptimalOctaveRange(isMale: isMale);
+      final minOctave = optimalRange['min']!;
+      final maxOctave = optimalRange['max']!;
+      
+      // Allow notes within the male octave range with up to 2 octave difference
+      final isInOptimalRange = detectedOctave >= minOctave && detectedOctave <= maxOctave;
+      return isInOptimalRange && octaveDiff <= 2;
+    }
+  }
+
   /// Get the semitone difference between two notes
   static int getSemitoneDifference(String note1, String note2) {
     final freq1 = noteToFrequency(note1);
@@ -112,13 +186,28 @@ class NoteUtils {
     return _noteNames.map((note) => '$note$octave').toList();
   }
 
-  /// Check if a frequency is within typical singing range
+  /// Check if a frequency is within typical singing range with improved gender-specific ranges
   static bool isInSingingRange(double frequency, {bool isMale = true}) {
     if (isMale) {
-      return frequency >= 80 && frequency <= 400; // Male vocal range
+      return frequency >= 80 && frequency <= 450; // Extended male vocal range
     } else {
-      return frequency >= 150 && frequency <= 800; // Female vocal range
+      return frequency >= 130 && frequency <= 900; // Extended female vocal range
     }
+  }
+
+  /// Get gender-specific optimal octave range for note detection
+  static Map<String, int> getOptimalOctaveRange({bool isMale = true}) {
+    if (isMale) {
+      return {'min': 2, 'max': 4}; // Male singers typically sing in octaves 2-4
+    } else {
+      return {'min': 3, 'max': 6}; // Female singers typically sing in octaves 3-6
+    }
+  }
+
+  /// Get gender-aware note from frequency with improved accuracy
+  static String getGenderAwareNote(double frequency, {bool isMale = true}) {
+    final gender = isMale ? 'male' : 'female';
+    return frequencyToNote(frequency, gender: gender);
   }
 
   /// Get confidence score based on how close frequency is to note

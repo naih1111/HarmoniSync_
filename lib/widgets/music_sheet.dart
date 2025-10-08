@@ -161,10 +161,37 @@ class _MusicSheetState extends State<MusicSheet> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    // Calculate total width needed for all measures
+    // Calculate total width needed for all measures using the same logic as _drawMeasures
     final measureCount = widget.score.measures.length;
-    final minMeasureWidth = 155.0;
-    final totalWidth = (measureCount * minMeasureWidth) + 200.0;
+    
+    // Calculate actual measure widths based on note content (same logic as in _drawMeasures)
+    List<double> measureWidths = [];
+    for (int m = 0; m < measureCount; m++) {
+      final measure = widget.score.measures[m];
+      final noteCount = measure.notes.length;
+      double width = 160.0; // Base minimum width
+      
+      // For measures with many eighth notes, increase the width
+      final eighthNotes = measure.notes.where((n) => 
+        n.type == 'eighth' || n.type == '16th'
+      ).length;
+      
+      // Adjust width based on note count and types
+      if (noteCount >= 6) {
+        width += 40.0; // Add extra space for measures with many notes
+      }
+      if (eighthNotes >= 4) {
+        width += eighthNotes * 5.0; // Extra space for each eighth note
+      }
+      
+      // Make sure width is in reasonable range
+      width = width.clamp(160.0, 240.0);
+      measureWidths.add(width);
+    }
+    
+    // Calculate total width from actual measure widths
+    final totalMeasureWidth = measureWidths.isNotEmpty ? measureWidths.reduce((a, b) => a + b) : 0.0;
+    final totalWidth = totalMeasureWidth + 300.0; // Extra margin for clef, key signature, etc.
     
     return SingleChildScrollView(
       controller: _scrollController ?? ScrollController(),
@@ -509,7 +536,7 @@ class MusicSheetBackgroundPainter extends CustomPainter {
       final noteCount = measure.notes.length;
       double noteSpacing = measureWidth / (noteCount + 1);
       
-      // Adjust spacing based on note types
+      // Adjust spacing based on note types and measure content
       if (noteCount > 1) {
         final longNotes = measure.notes.where((n) => 
           n.type == 'whole' || 
@@ -518,17 +545,22 @@ class MusicSheetBackgroundPainter extends CustomPainter {
         ).length;
         final shortNotes = noteCount - longNotes;
         
-        // Base spacing calculation
-        noteSpacing = ((measureWidth - 60) / (noteCount + 0.5)).clamp(30.0, 75.0);
+        // Base spacing calculation with improved distribution
+        noteSpacing = ((measureWidth - 50) / (noteCount + 0.3)).clamp(25.0, 80.0);
         
         // Adjustments based on note types
-        if (longNotes > 0) noteSpacing += 8.0;
-        if (shortNotes > 2) noteSpacing -= 4.0;
-        if (shortNotes > 4) noteSpacing -= 2.0;
+        if (longNotes > 0) noteSpacing += 6.0;
+        if (shortNotes > 2) noteSpacing -= 2.0;
+        if (shortNotes > 4) noteSpacing -= 1.0;
         
-        // Special case for all eighth notes (like measure 4)
-        if (shortNotes == noteCount && noteCount >= 6) {
-          noteSpacing = (measureWidth - 50) / (noteCount + 0.5);
+        // Special case for measures with mixed note types (like measure 4)
+        if (longNotes > 0 && shortNotes > 0) {
+          noteSpacing = (measureWidth - 45) / (noteCount + 0.4);
+        }
+        
+        // Special case for all eighth/sixteenth notes
+        if (shortNotes == noteCount && noteCount >= 4) {
+          noteSpacing = (measureWidth - 40) / (noteCount + 0.6);
         }
       }
 
@@ -606,8 +638,37 @@ class MusicSheetBackgroundPainter extends CustomPainter {
       
       final List<Map<String, dynamic>> notePositions = [];
       
+      // Check if we should use MusicXML positioning
+      bool useMusicXMLPositioning = measure.notes.any((note) => note.defaultX != null);
+      double measureStartX = currentX;
+      
       for (int i = 0; i < measure.notes.length; i++) {
         final note = measure.notes[i];
+        
+        // Use MusicXML default-x positioning if available
+        if (useMusicXMLPositioning && note.defaultX != null) {
+          // Find the range of default-x values in this measure to scale properly
+          double minX = measure.notes
+              .where((n) => n.defaultX != null)
+              .map((n) => n.defaultX!)
+              .reduce((a, b) => a < b ? a : b);
+          double maxX = measure.notes
+              .where((n) => n.defaultX != null)
+              .map((n) => n.defaultX!)
+              .reduce((a, b) => a > b ? a : b);
+          
+          // Scale the positioning to fit within our measure width
+          if (maxX > minX) {
+            double range = maxX - minX;
+            double availableWidth = measureWidth - 50.0; // Leave margins
+            double scaleFactor = availableWidth / range;
+            noteX = measureStartX + 25.0 + ((note.defaultX! - minX) * scaleFactor);
+          } else {
+            // Fallback if all notes have same default-x
+            noteX = measureStartX + 25.0;
+          }
+        }
+        
         final noteY = _getNoteY(note, staffStartY);
         
         // Store position for beaming
@@ -691,7 +752,10 @@ class MusicSheetBackgroundPainter extends CustomPainter {
           _drawSlurs(canvas, noteX, noteY, note, paint);
         }
         
-        noteX += noteSpacing;
+        // Only increment noteX if not using MusicXML positioning
+        if (!useMusicXMLPositioning) {
+          noteX += noteSpacing;
+        }
       }
       
       // Draw beams for eighth note groups
@@ -1315,17 +1379,98 @@ class MusicSheetBackgroundPainter extends CustomPainter {
   void _drawBeam(Canvas canvas, List<Map<String, dynamic>> notePositions, List<int> group, Paint paint) {
     if (group.length < 2) return;
     
-    // Get the note positions for the beam group
-    final firstNote = notePositions[group.first];
-    final lastNote = notePositions[group.last];
+    // Get all notes in the beam group
+    final beamNotes = group.map((i) => notePositions[i]).toList();
     
-    // Get the first and last note objects
-    final firstNoteObj = firstNote['note'];
-    final lastNoteObj = lastNote['note'];
+    // Determine stem direction based on the average pitch of the group
+    double avgY = 0.0;
+    for (final notePos in beamNotes) {
+      avgY += notePos['y'] as double;
+    }
+    avgY /= beamNotes.length;
     
-    // For background painter, we don't need to implement full beam drawing
-    // Just return early since beams are part of static rendering
-    return;
+    final middleLineY = staffStartY + (staffSpacing * 2);
+    final stemUp = avgY > middleLineY; // Stems up if notes are below middle line
+    
+    // Calculate actual stem length
+    double actualStemLength = stemLength * 0.65;
+    
+    // Adjust stem length for notes outside staff
+    bool hasExtremeNotes = false;
+    for (final notePos in beamNotes) {
+      final y = notePos['y'] as double;
+      if (y < staffStartY - staffSpacing * 1.5 || y > staffStartY + staffSpacing * 5.5) {
+        hasExtremeNotes = true;
+        break;
+      }
+    }
+    if (hasExtremeNotes) {
+      actualStemLength += staffSpacing * 0.5;
+    }
+    
+    // Calculate beam endpoints
+    final firstNote = beamNotes.first;
+    final lastNote = beamNotes.last;
+    final firstX = firstNote['x'] as double;
+    final lastX = lastNote['x'] as double;
+    final firstY = firstNote['y'] as double;
+    final lastY = lastNote['y'] as double;
+    
+    double beamY1, beamY2, beamX1, beamX2;
+    
+    if (stemUp) {
+      // Find the highest note in the group for proper beam positioning
+      double highestY = beamNotes.map((n) => n['y'] as double).reduce((a, b) => a < b ? a : b);
+      beamY1 = highestY - actualStemLength;
+      beamY2 = highestY - actualStemLength;
+      
+      // Stem up - positioned on the right side of the note head
+      beamX1 = firstX + noteSize * 0.11; // Slightly adjusted for better alignment
+      beamX2 = lastX + noteSize * 0.11;
+    } else {
+      // Find the lowest note in the group for proper beam positioning
+      double lowestY = beamNotes.map((n) => n['y'] as double).reduce((a, b) => a > b ? a : b);
+      beamY1 = lowestY + actualStemLength;
+      beamY2 = lowestY + actualStemLength;
+      
+      // Stem down - positioned on the left side of the note head
+      beamX1 = firstX - noteSize * 0.08; // Consistent positioning for all note types
+      beamX2 = lastX - noteSize * 0.08;
+    }
+    
+    // Draw primary beam
+    paint.strokeWidth = staffSpacing * 0.4; // Slightly thicker for better visibility
+    paint.style = PaintingStyle.stroke;
+    paint.strokeCap = StrokeCap.butt;
+    
+    canvas.drawLine(
+      Offset(beamX1, beamY1),
+      Offset(beamX2, beamY2),
+      paint,
+    );
+    
+    // Draw secondary beams for 16th notes if present
+    bool hasSecondaryBeam = false;
+    for (final notePos in beamNotes) {
+      final note = notePos['note'] as Note;
+      if (note.type == '16th') {
+        hasSecondaryBeam = true;
+        break;
+      }
+    }
+    
+    if (hasSecondaryBeam) {
+      final secondaryBeamOffset = stemUp ? staffSpacing * 0.5 : -staffSpacing * 0.5;
+      canvas.drawLine(
+        Offset(beamX1, beamY1 + secondaryBeamOffset),
+        Offset(beamX2, beamY2 + secondaryBeamOffset),
+        paint,
+      );
+    }
+    
+    // Reset paint properties
+    paint.strokeWidth = lineWidth;
+    paint.strokeCap = StrokeCap.round;
   }
 
   // Returns true if the note's step is sharped/flatted in the key signature
@@ -1447,8 +1592,36 @@ class MusicSheetOverlayPainter extends CustomPainter {
         noteX = currentX + 20.0;
       }
       
+      // Check if we should use MusicXML positioning
+      bool useMusicXMLPositioning = measure.notes.any((note) => note.defaultX != null);
+      double measureStartX = currentX;
+      
       for (int i = 0; i < measure.notes.length; i++) {
         final note = measure.notes[i];
+        
+        // Use MusicXML default-x positioning if available
+        if (useMusicXMLPositioning && note.defaultX != null) {
+          // Find the range of default-x values in this measure to scale properly
+          double minX = measure.notes
+              .where((n) => n.defaultX != null)
+              .map((n) => n.defaultX!)
+              .reduce((a, b) => a < b ? a : b);
+          double maxX = measure.notes
+              .where((n) => n.defaultX != null)
+              .map((n) => n.defaultX!)
+              .reduce((a, b) => a > b ? a : b);
+          
+          // Scale the positioning to fit within our measure width
+          if (maxX > minX) {
+            double range = maxX - minX;
+            double availableWidth = measureWidth - 50.0; // Leave margins
+            double scaleFactor = availableWidth / range;
+            noteX = measureStartX + 25.0 + ((note.defaultX! - minX) * scaleFactor);
+          } else {
+            // Fallback if all notes have same default-x
+            noteX = measureStartX + 25.0;
+          }
+        }
         final noteY = _getNoteY(note, staffStartY);
         
         // Calculate if this is the current note
@@ -1500,7 +1673,10 @@ class MusicSheetOverlayPainter extends CustomPainter {
           );
         }
         
-        noteX += noteSpacing;
+        // Only increment noteX if not using MusicXML positioning
+        if (!useMusicXMLPositioning) {
+          noteX += noteSpacing;
+        }
       }
       
       currentX += measureWidth;
